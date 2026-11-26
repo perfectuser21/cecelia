@@ -6,6 +6,8 @@ import os from 'node:os';
 import {createHash,randomUUID,scryptSync} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import {apiKeyIdentityFingerprint} from '../bundle.mjs';
+import {stopGroup,groupMembers} from '../process.mjs';
+import {observeProcess} from '../store.mjs';
 const brainRoot=path.resolve(import.meta.dirname,'../../..');
 const bundleFiles=['scripts/native-agent/bundle.mjs','scripts/native-agent/config.mjs','scripts/native-agent/store.mjs','scripts/native-agent/process.mjs','scripts/native-agent/worker.mjs','scripts/native-agent/cli.mjs','scripts/coding-workflow/lib/codex-auth.mjs','src/orchestrator/activity-supervisor-state.cjs'];
 const bundleDigest=root=>hash(JSON.stringify(bundleFiles.map(p=>[p,fs.existsSync(path.join(root,p))?hash(fs.readFileSync(path.join(root,p))):'missing'])));
@@ -13,7 +15,30 @@ const hash=x=>createHash('sha256').update(x).digest('hex');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function fixture(t,{timeout=10000,copyBundle=false}={}){
  const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'native-agent-test-')));fs.chmodSync(root,0o700);
- t.after(()=>{try{const launches=fs.readFileSync(path.join(root,'launches'),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);for(const p of launches)try{process.kill(-p.pid,'SIGKILL');}catch{}}catch{}fs.rmSync(root,{recursive:true,force:true});});
+ const workers=new Map(),nativeGroups=new Map(),controls=new Set(),runs=new Set();let cleaning;
+ const remember=(runId,value)=>{
+  for(const [field,owned] of [['worker',workers],['child',nativeGroups]]){
+   const identity=value?.[field];
+   if(!owned.has(runId)&&Number.isSafeInteger(identity?.pid)&&typeof identity.birth==='string'&&observeProcess(identity.pid,identity.birth)==='matching')owned.set(runId,Object.freeze({...identity}));
+  }
+ };
+ const cleanup=()=>cleaning??=(async()=>{
+  await Promise.all(controls);
+  for(const runId of runs){
+   const file=path.join(root,'state',runId,'state.json');if(!fs.existsSync(file))continue;
+   const state=JSON.parse(fs.readFileSync(file));
+   // 收尾不从可能被业务测试改写的state认领任何新进程。
+   for(const [field,owned] of [['worker',workers],['child',nativeGroups]])if(state[field]&&!owned.has(runId)){
+    assert.equal(observeProcess(state[field].pid,state[field].birth),'absent','未冻结的'+field+'身份不能确认已退出，保留fixture');
+    assert.deepEqual(groupMembers(state[field].pid),[],'未冻结的'+field+'组仍有活成员，保留fixture');
+   }
+  }
+  // 先收worker，避免它在原生CLI退出后继续写state；再收独立原生组及孙进程。
+  for(const identity of workers.values())assert.ok(await stopGroup(identity,50),'自有worker未确认停止，保留fixture');
+  for(const identity of nativeGroups.values())assert.ok(await stopGroup(identity,50),'自有原生组未确认停止，保留fixture');
+  fs.rmSync(root,{recursive:true,force:true});
+ })();
+ t.after(cleanup);
  for(const d of ['home','auth','cwd','skills','state'])fs.mkdirSync(path.join(root,d),{mode:0o700});
  fs.writeFileSync(path.join(root,'auth/auth.json'),JSON.stringify({auth_mode:'apikey',OPENAI_API_KEY:'fixture-native-account-a'}),{mode:0o600});
  const skill=path.join(root,'skills/SKILL.md');fs.writeFileSync(skill,'# Explicit fixture skill\n',{mode:0o600});
@@ -36,10 +61,16 @@ process.stdin.on('end',()=>{
  const file=path.join(root,'config.json');fs.writeFileSync(file,JSON.stringify(config),{mode:0o600});
  const request=(prompt='fixture complete body')=>({protocol:'native-agent/v1',action:'start',tenant:'tenant-a',department:'department-a',role:'agent-a',account_ref:'account-a',task_id:randomUUID(),run_id:randomUUID(),request_nonce:randomUUID(),input_digest:hash(prompt),prompt,model:'fixture-model',thinking:'high',skill_ids:['skill-a'],timeout_ms:timeout,deadline_ms:Date.now()+timeout});
  const control=(r,action)=>Object.fromEntries(Object.entries({...r,action}).filter(([k])=>!['prompt','model','thinking','skill_ids','timeout_ms','deadline_ms'].includes(k)));
- const call=r=>new Promise(resolve=>{const c=spawn(process.execPath,[cli,file,config.bundle_sha256],{env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',HOME:root,OPENAI_API_KEY:'parent-must-not-leak'},stdio:['pipe','pipe','pipe']});let out='',err='';c.stdout.setEncoding('utf8');c.stderr.setEncoding('utf8');c.stdout.on('data',x=>out+=x);c.stderr.on('data',x=>err+=x);c.on('exit',code=>{let value;try{value=JSON.parse(out);}catch{}resolve({code,value,out,err});});c.stdin.on('error',()=>{});c.stdin.end(JSON.stringify(r));});
+ const call=r=>new Promise((resolve,reject)=>{
+  const c=spawn(process.execPath,[cli,file,config.bundle_sha256],{env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',HOME:root,OPENAI_API_KEY:'parent-must-not-leak'},stdio:['pipe','pipe','pipe']});
+  runs.add(r.run_id);controls.add(new Promise(done=>c.once('close',done)));
+  let out='',err='';c.stdout.setEncoding('utf8');c.stderr.setEncoding('utf8');c.stdout.on('data',x=>out+=x);c.stderr.on('data',x=>err+=x);
+  c.on('error',reject);c.on('close',code=>{let value;try{value=JSON.parse(out);}catch{}remember(r.run_id,value);resolve({code,value,out,err});});
+  c.stdin.on('error',()=>{});c.stdin.end(JSON.stringify(r));
+ });
  const launches=()=>{try{return fs.readFileSync(path.join(root,'launches'),'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);}catch{return [];}};
  const poll=async(r,predicate)=>{let last;for(let n=0;n<120;n++){const x=await call(control(r,'inspect'));assert.equal(x.code,0,x.err+x.out);last=x.value;if(predicate(x.value))return x.value;await sleep(50);}throw Error('native result not confirmed '+JSON.stringify(last));};
- return {root,file,config,sourceRoot,request,control,call,poll,launches,save:()=>fs.writeFileSync(file,JSON.stringify(config),{mode:0o600})};
+ return {root,file,config,sourceRoot,request,control,call,poll,launches,cleanup,save:()=>fs.writeFileSync(file,JSON.stringify(config),{mode:0o600})};
 }
 test('真实CLI将完整长正文送stdin、固定账号/HOME，并持久保存本次child退出结果',async t=>{
  const f=fixture(t),r=f.request('完整原文'.repeat(10000)+'\n'+('do not truncate; '.repeat(8000)));const start=await f.call(r);
@@ -81,6 +112,24 @@ for(const birth of ['not-the-recorded-process',null])test(`监督PID复用或身
  const reply=await f.call(f.control(r,'cancel'));assert.equal(reply.value?.launch_state,'unknown');assert.equal(reply.value?.execution_stopped,false);
  assert.equal(fs.existsSync(path.join(f.root,'state',r.run_id,'cancel.json')),false);
  assert.doesNotThrow(()=>process.kill(f.launches()[0].pid,0));
+});
+
+test('fixture清理必须先停止冻结身份的worker和原生组，再删除被unknown测试改写的state',async t=>{
+ const f=fixture(t),r=f.request('MODE_HANG');await f.call(r);
+ const running=await f.poll(r,v=>v?.launch_state==='running'&&f.launches().length===1);
+ const worker={...running.worker},child={...running.child};
+ // 红测也只收割本fixture冻结身份的资源，不让故意暂停的worker泄漏。
+ t.after(async()=>{assert.ok(await stopGroup(worker,50),'自有worker兜底未确认停止');assert.ok(await stopGroup(child,50),'自有原生组兜底未确认停止');});
+ assert.equal(observeProcess(worker.pid,worker.birth),'matching');process.kill(worker.pid,'SIGSTOP');
+ const file=path.join(f.root,'state',r.run_id,'state.json'),state=JSON.parse(fs.readFileSync(file));
+ state.worker.birth=null;fs.writeFileSync(file,JSON.stringify(state),{mode:0o600});
+ const reply=await f.call(f.control(r,'cancel'));assert.equal(reply.value?.launch_state,'unknown');assert.equal(reply.value?.execution_stopped,false);
+ assert.equal(fs.existsSync(path.join(f.root,'state',r.run_id,'cancel.json')),false);
+ assert.doesNotThrow(()=>process.kill(f.launches()[0].pid,0));
+ await f.cleanup();
+ assert.deepEqual(groupMembers(worker.pid),[],'cleanup返回时真实worker仍活着，不能删除其状态目录');
+ assert.deepEqual(groupMembers(child.pid),[],'cleanup返回时原生组仍活着');
+ assert.equal(fs.existsSync(f.root),false);
 });
 
 test('真实发布bundle源码字节漂移在spawn前拒绝，不能只echo声明哈希',async t=>{
