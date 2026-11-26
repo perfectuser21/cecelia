@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {cleanupReplayFixture} from './fixtures/owned-replay-fixture.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -13,7 +14,8 @@ const database=process.env.TEST_DB_URL;
 for(const [mutation,error] of [['calls','commander_replay_calls_changed'],['new-action','commander_replay_actions_changed'],['action-result','commander_replay_actions_changed'],['artifact','commander_replay_artifact_changed']]){
  test(`实际PG/host入口拒绝replay后的真实${mutation}副作用`,{skip:!database?'需要runtime-integration的隔离TEST_DB_URL':false,timeout:180000},async t=>{
   const url=new URL(database);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.pathname,'/cecelia_scratch');
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'repair-replay-regression-'));t.after(()=>fs.rmSync(directory,{recursive:true,force:true}));
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'repair-replay-regression-'));let closed=false,verified=false;
+  t.after(()=>{const cleanup=cleanupReplayFixture({directory,closed,verified,aborted:t.signal.aborted});if(!cleanup.removed){t.diagnostic(`保留未确认清理的fixture: ${directory}`);assert.fail('owned_smoke_fixture_retained:'+cleanup.reason);}});
   const journal=path.join(directory,'injections.jsonl'),loader=path.join(directory,'inject.mjs');
   // Instrument only the smoke parent's replay launch; its host, PG journal, DBOS,
   // checker and real OS children remain the actual current production entrypoints.
@@ -50,8 +52,9 @@ const db=new pg.Client({connectionString:url.href});await db.connect();try{
 }
 `);
   const child=spawn(process.execPath,[smoke],{env:{...process.env,COMMANDER_REPAIR_REAL_CODEX:'0',COMMANDER_SMOKE_ARTIFACT_ROOT:directory,NODE_OPTIONS:`--import ${pathToFileURL(loader).href}`},stdio:['ignore','pipe','pipe']});
+  child.once('close',()=>{closed=true;});
   let stdout='',stderr='';child.stdout.on('data',x=>stdout+=x);child.stderr.on('data',x=>stderr+=x);
-  const status=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',(code,signal)=>resolve({code,signal}));});
+  const status=await new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',(code,signal)=>resolve({code,signal}));});
   assert.equal(status.signal,null,stderr);assert.ok(fs.existsSync(journal),'必须先实际执行owned child/PG副作用，不能由导入失败假红: '+stderr);
   const injections=fs.readFileSync(journal,'utf8').trim().split('\n').map(JSON.parse);assert.ok(injections.length>0);assert.ok(injections.every(x=>x.applied));
   if(mutation==='calls')assert.ok(injections.every(x=>x.calls_after===x.calls_before+1));
@@ -59,6 +62,6 @@ const db=new pg.Client({connectionString:url.href});await db.connect();try{
   if(mutation==='action-result')assert.ok(injections.every(x=>JSON.stringify(x.actions_after)!==JSON.stringify(x.actions_before)));
   if(mutation==='artifact')assert.ok(injections.every(x=>x.artifact.answer===43));
   t.diagnostic(JSON.stringify(injections.map(x=>({mutation:x.mutation,run_id:x.run_id,owned_child_pid:x.owned_child_pid,calls_before:x.calls_before,calls_after:x.calls_after,actions_before:x.actions_before.length,actions_after:x.actions_after.length,result_changed:JSON.stringify(x.actions_before)!==JSON.stringify(x.actions_after),artifact:x.artifact}))));
-  assert.notEqual(status.code,0,`实际smoke不能将新增副作用报告为PASS: ${stdout}`);assert.match(stderr,new RegExp(error));
+  assert.notEqual(status.code,0,`实际smoke不能将新增副作用报告为PASS: ${stdout}`);assert.match(stderr,new RegExp(error));verified=true;
  });
 }
