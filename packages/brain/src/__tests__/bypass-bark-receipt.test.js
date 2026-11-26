@@ -66,8 +66,7 @@ describe('bypass audit reports only confirmed Bark sends', () => {
 
     expect(result).toMatchObject({ ok: true, rollup: { day: '2026-10-12', counts: COUNTS, barked } });
     expect(schedulerOutcome({ result })).toBe('pass');
-    expect(exec).toHaveBeenCalledTimes(1);
-    expect(exec.mock.calls[0][0]).toContain('sqlite3 -readonly -json');
+    expect(exec).not.toHaveBeenCalled();
     expect(sendBark).toHaveBeenCalledTimes(2);
     expect(sendBark.mock.calls.map(([, , opts]) => opts)).toEqual([
       { dedupeKey: 'bypass-alert:2026-10-12:phone_outward', dedupeTtlSec: 2 * 86400 },
@@ -81,7 +80,7 @@ describe('bypass audit reports only confirmed Bark sends', () => {
     expect(warn).toHaveBeenCalledTimes(receipt instanceof Error ? 2 : 0);
 
     // Failed and unconfigured sends retain the existing five-minute gate; no new retry policy.
-    expect(await runBypassAudit(pool, deps)).toMatchObject({ ok: true, scan: { skipped: true }, rollup: { skipped: true } });
+    expect(await runBypassAudit(pool, deps)).toMatchObject({ ok: true, rollup: { skipped: true } });
     expect(sendBark).toHaveBeenCalledTimes(2);
     expect(pool.writes).toHaveLength(2);
   });

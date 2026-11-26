@@ -36,7 +36,6 @@ factory-f4-selfheal-smoke.sh
 factory-f5-cockpit-smoke.sh
 feature-registry-smoke.sh
 features-ledger-smoke.sh
-feishu-task-ledger-smoke.sh
 fleet-credential-envelope-smoke.sh
 fleet-worker-workspace-smoke.sh
 gate3-brain-deploy-smoke.sh
@@ -200,7 +199,6 @@ phone-runner-infra-smoke.sh
 dead-man-switch-usvps-smoke.sh
 alarm-ledger-smoke.sh
 runs-execution-table-smoke.sh
-openclaw-run-ingest-smoke.sh
 
 workflow-contract-identity-smoke.sh
 enablers-failure-semantics-smoke.sh
