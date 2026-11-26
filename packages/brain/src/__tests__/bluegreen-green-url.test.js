@@ -50,6 +50,9 @@ exit 7
 `;
   writeFileSync(join(dir, 'docker'), docker); chmodSync(join(dir, 'docker'), 0o755);
   writeFileSync(join(dir, 'curl'), curl); chmodSync(join(dir, 'curl'), 0o755);
+  // 只替换模拟现场的墙钟等待；实际稳定探活仍执行三次并保留等待间隔。
+  writeFileSync(join(dir, 'sleep'), `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> "${sleepLog}"\n`);
+  chmodSync(join(dir, 'sleep'), 0o755);
   return { dockerLog, curlLog, sleepLog };
 }
 
