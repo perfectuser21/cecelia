@@ -139,7 +139,7 @@ export const TASK_TYPE_REGISTRY = Object.freeze({
   deploy_drill:      T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   nightly:            T('none', false, false, null, 'none', false, false, 'none', false, [ANC]),
   app_server_run: T('app-server', false, false, 'app-server-controller', 'external-worker', true, false, 'protected', true, [ANC, PROT, ESC, CX]),
-  janitor:            T('preview-janitor', false, false, 'preview-janitor', 'preview-janitor', true, false, 'protected', true, [ANC, PROT, ESC, CX]),
+  janitor:            T('image-janitor', false, false, 'image-janitor', 'image-janitor', true, false, 'protected', true, [ANC, PROT, ESC, CX]),
 });
 
 export const KIND_FOR_TASK_TYPE = Object.freeze(

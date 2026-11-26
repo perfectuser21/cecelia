@@ -19,6 +19,15 @@ it('手机独立派发注册30s节奏且不被串行慢job阻塞', () => {
   expect(schedulerJobsModule.SERIAL_JOBS).not.toContain(job);
 });
 describe('scheduler-jobs 注册表', () => {
+  it('实际默认轮仅保留镜像Janitor，不访问退役缓存HTTP入口', async () => {
+    const { runImageRetentionJanitor } = await import('../image-retention-scheduler.js');
+    const pool = makePool();
+    const results = await runSchedulerJobsOnce(pool);
+    expect(results.some(row => row.name === 'preview-owned-cache-janitor')).toBe(false);
+    expect(results.some(row => row.name === 'us-brain-image-janitor')).toBe(true);
+    expect(runImageRetentionJanitor).toHaveBeenCalled();
+  });
+
   it('退役 Claude worker 池不再注册周期派发任务', () => {
     expect(JOBS.map(job => job.name)).not.toContain('worker-pool-dispatch');
   });

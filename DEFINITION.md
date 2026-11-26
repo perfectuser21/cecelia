@@ -1,6 +1,6 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.322
+**Brain 版本**: 1.445.323
 
 MMV 预发的 101 已审核后继运行可通过单个内部接口读取即时准入快照。接口独立限流，同时核验运行、任务、设备租约、审核和当前部署版本。
 
@@ -8,7 +8,7 @@ MMV 预发的 101 已审核后继运行可通过单个内部接口读取即时�
 
 旧夜间任务标记调度器已清退；状态接口保留停用兼容数据，普通 Tick、Notion 任务派发及历史日报读取继续由现役入口提供。
 
-旧 PR Preview 的 `/start`（先鉴权）与 `/allocate` 已退役并返回 410；代理不再周期采样宿主磁盘。Cache 保留独立磁盘检测、强鉴权与 intent/receipt，历史 status/stop/DELETE 接口继续保留。
+旧 PR Preview 的 `/start`（先鉴权）与 `/allocate` 已退役并返回 410；独立代理、专属 npm cache 的默认 Janitor 与 HTTP 执行链已清退。历史 status/stop/DELETE、持久回执与资源档案继续保留；原生 staging 仍直接分配端口并运行 review-preview。
 
 旧 OpenClaw cron 运行采集、旧 bot 飞书群补账与 bypass 的旧 SQLite 扫描已退出；Notion→Brain 入账、独立员工飞书入口、手机旁路事件及历史 Runs 投影继续保留。
 

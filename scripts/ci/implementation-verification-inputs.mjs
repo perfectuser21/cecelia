@@ -242,9 +242,9 @@ function runnerSelector(path,entry,paths){
  if(entry?.profile!=='basic')return null;
  const direct=(directory,regex)=>path.startsWith(directory+'/')&&!path.slice(directory.length+1).includes('/')&&regex.test(path.slice(directory.length+1));
  if(functionalEntry(entry)){
-  const ops=direct('scripts',/^(?:dispatch-worker.*|brain-image-(?:retention|deploy|rollback).*|bluegreen-sidecar.*|preview-cache.*)\.test\.mjs$/)
+  const ops=direct('scripts',/^(?:dispatch-worker.*|brain-image-(?:retention|deploy|rollback).*|bluegreen-sidecar.*)\.test\.mjs$/)
    ||direct('scripts/__tests__',/^(?:bluegreen-|brain-deploy-|preview-|codex-remote-launch|codex-request|dashboard-release).*\.test\.sh$/)
-   ||direct('scripts/__tests__',/^dashboard-release-bind.*\.test\.mjs$/)||direct('scripts/preview-agent/__tests__',/\.test\.mjs$/)
+   ||direct('scripts/__tests__',/^dashboard-release-bind.*\.test\.mjs$/)
    ||direct('docker/cecelia-runner/__tests__',/\.test\.(?:cjs|sh)$/)||/^scripts\/ops\/__tests__\/.+\.test\.sh$/.test(path)
    ||['brain-compose-envfile-authority','brain-deploy-service-isolation','dashboard-sha-reconcile','deploy-chain-wounds','deploy-local-npm-cache','gate3-brain-deploy','runner-credential-single-chain','dashboard-staging-gate'].some(n=>path===`scripts/smoke/${n}-smoke.sh`);
   if(ops){const domain=legacyDomainForTest(path),domains=legacyDomainsForChanges(paths);return componentSelected(entry,'ops',paths)&&domain&&(!domains||domains.has(domain))?{component:'ops',kind:'basic_ops_regular_test',owner:'scripts/ci/ops-checks.mjs'}:null;}
