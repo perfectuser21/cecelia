@@ -1138,11 +1138,6 @@
       "role": "verification"
     },
     {
-      "owner_path": "packages/brain/src/capacity-gate.js",
-      "path": "packages/brain/src/__tests__/integration/capacity-gate.test.js",
-      "role": "verification"
-    },
-    {
       "owner_path": "packages/brain/src/dispatcher.js",
       "path": "packages/brain/src/__tests__/dispatcher-dedup-recurring-identity.test.js",
       "role": "verification"

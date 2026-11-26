@@ -23,8 +23,6 @@ kv-route-smoke.sh
 map-engine-smoke.sh
 notion-brain-first-smoke.sh
 phone-registry-smoke.sh
-preview-env-smoke.sh
-preview-environments-smoke.sh
 quality-test-pyramid-smoke.sh
 sprint-d-7table-smoke.sh
 t4-claim-protocol-smoke.sh
@@ -54,7 +52,6 @@ ops-registry-smoke.sh
 ops-runs-smoke.sh
 ops-skill-versions-smoke.sh
 ops-workflows-smoke.sh
-preview-ledger-activate-smoke.sh
 project-brief-smoke.sh
 qiumi-foundation-smoke.sh
 relay-baton-smoke.sh

@@ -162,8 +162,5 @@ describe('host-disk-sampler.sh — DEPLOY_ROOT 自推断（不传 CECELIA_DEPLOY
     expect(existsSync(join(elsewhere, '.runtime', 'host-disk.json'))).toBe(false);
   });
 
-  it('样本落点必须与 capacity-gate 的读取路径一致（<repo>/.runtime/host-disk.json）', () => {
-    const gate = readFileSync(join(REPO_ROOT, 'packages/brain/src/capacity-gate.js'), 'utf8');
-    expect(gate).toMatch(/join\(REPO_ROOT,\s*'\.runtime',\s*'host-disk\.json'\)/);
-  });
+
 });
