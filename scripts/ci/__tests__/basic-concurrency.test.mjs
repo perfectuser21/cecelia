@@ -67,9 +67,19 @@ test('人类PR按ref分组，single且取消同PR旧提交，不被actor误判bo
   assert.notEqual(one.group, two.group);
 });
 
-for (const event of ['push', 'workflow_dispatch']) test(event + '保持main分组、single和不取消，不因缺PR payload误判', () => {
+for (const event of ['push', 'workflow_dispatch']) test(event + '保持main分组、max和不取消，不丢pending提交验收', () => {
   assert.deepEqual(policy({event_name: event, ref: 'refs/heads/main', actor: 'dependabot[bot]', event: {}}),
-    {group: 'ci-refs/heads/main', queue: 'single', 'cancel-in-progress': false});
+    {group: 'ci-refs/heads/main', queue: 'max', 'cancel-in-progress': false});
+});
+
+for (const event of ['push', 'workflow_dispatch']) test(event + '非main ref仍保single且不取消', () => {
+  assert.deepEqual(policy({event_name: event, ref: 'refs/heads/release', event: {}}),
+    {group: 'ci-refs/heads/release', queue: 'single', 'cancel-in-progress': false});
+});
+
+test('schedule保留weekly-codeql分组、single且不取消，不套用main max', () => {
+  assert.deepEqual(policy({event_name: 'schedule', ref: 'refs/heads/main', event: {}}),
+    {group: 'ci-weekly-codeql', queue: 'single', 'cancel-in-progress': false});
 });
 
 test('所有真实事件分支都不生成max+canceltrue非法组合', () => {
