@@ -88,6 +88,8 @@ Cecelia 负责登记、调度和核对工作；具体执行交给有授权的外
 
 ## 后台开关与运行证据
 
+旧夜间任务标记调度器的模块与启动接线已清退；`status/full` 保留停用兼容封套。普通任务派发与历史日报读取保留各自现役入口。
+
 启动接线以 [server.js](packages/brain/server.js) 为准，调度配置见 [scheduler-jobs.js](packages/brain/src/scheduler-jobs.js)。独立思考层开关由 [consciousness-guard.js](packages/brain/src/consciousness-guard.js) 解释；关闭该层保留任务派发、调度和监控。本文不将旧夜间编排、地图扫描、情绪、日报或旧自动开发列作需要启用的服务。
 
 源码仍有兼容模块、启动分支或历史配置时，先核实际消费者和开关，再决定是否清退；当前生产启用状态未在本文验证。不能把模块存在、默认值、测试通过或历史事故记录当作在线证据。
