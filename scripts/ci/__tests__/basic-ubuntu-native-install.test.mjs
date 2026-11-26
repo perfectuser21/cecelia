@@ -37,11 +37,11 @@ if(args[1]==='install')for(const tool of ['rg','jq','zsh','xmllint'])fs.writeFil
 process.exit(0);
 `,{mode:0o755});
  const job=workflow.jobs.checks,install=job.steps.findIndex(s=>s.name==='Install test tools');assert.ok(install>=0);
- const context={matrix:{component:'brain-unit',shard:3},github:{event_name:'push'}};
+ const context={matrix:{component:'scripts'},github:{event_name:'workflow_dispatch'}};
  const steps=job.steps.slice(0,install+1).filter(s=>s.run&&(!s.if||runInNewContext(s.if,context,{timeout:100})));
  const env={...process.env,PATH:bin+':'+process.env.PATH,NODE_OPTIONS:'--import='+pathToFileURL(preload).href,
   GITHUB_ACTIONS:'true',RUNNER_ENVIRONMENT:'github-hosted',RUNNER_OS:'Linux',
-  APT_LOG:log,APT_SOURCES:sources,APT_MIRRORS:mirrors,APT_FAULT:fault};
+  COMPONENT:'scripts',APT_LOG:log,APT_SOURCES:sources,APT_MIRRORS:mirrors,APT_FAULT:fault};
  let result;
  for(const step of steps){
   const node=/^node (scripts\/[A-Za-z0-9/_.-]+\.mjs)$/.exec(step.run.trim());
@@ -52,7 +52,7 @@ process.exit(0);
  assert.equal(result.status,fault?(fault==='update'?31:32):0,result.stdout+result.stderr);
  const calls=readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);
  assert.deepEqual(calls[0],['apt-get','update','-qq']);
- if(fault!=='update')assert.deepEqual(calls[1],['apt-get','install','-y','--no-install-recommends','ripgrep','jq','zsh','libxml2-utils']);
+ if(fault!=='update')assert.deepEqual(calls[1],['apt-get','install','-y','--no-install-recommends','jq']);
  assert.equal(calls.length,fault==='update'?1:2);
  assert.equal(readFileSync(sources,'utf8'),source);
 });

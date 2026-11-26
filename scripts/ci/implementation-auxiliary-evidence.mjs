@@ -200,11 +200,6 @@ function removeSelectedSourceRelations(text, select) {
  let result=text;for(const [start,end] of ranges.reverse())result=result.slice(0,start)+result.slice(end);
  return result;
 }
-/** 版本机器人保持已有仅消费release的语义。 */
-export function removeConsumedReleaseRelations(text, consumedPaths) {
- const consumed=new Set(consumedPaths);
- return removeSelectedSourceRelations(text,row=>row.role==='release'&&consumed.has(row.path));
-}
 /** 清理机器人只退役实际删除的瞬态资料，持久文档不因删除清单而被授权退役。 */
 export function removeDeletedArtifactRelations(text, deletedPaths) {
  if(!Array.isArray(deletedPaths)||deletedPaths.length>1024)fail('AUXILIARY_DELETE_LIST_INVALID');

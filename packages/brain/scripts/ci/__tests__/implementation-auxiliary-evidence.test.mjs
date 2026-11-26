@@ -1,12 +1,12 @@
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as gate from '../../../../../scripts/ci/implementation-gate.mjs';
 import { runImplementationPrGate } from '../../../../../scripts/ci/implementation-pr-gate.mjs';
 import { assertImplementationReport } from '../../../src/lib/implementation-report.js';
-import { applyAutoVersion } from '../../auto-version-apply.mjs';
 
 const roots=[];
 it('独立Node入口在Brain-only安装下仍真实记录无效输入，不提前加载scratch图扫描依赖',()=>{
@@ -17,71 +17,7 @@ it('独立Node入口在Brain-only安装下仍真实记录无效输入，不提�
  execFileSync(process.execPath,['--input-type=module','-e',code],{cwd:f.root,encoding:'utf8'});
  expect(JSON.parse(readFileSync(join(outputDir,'gap.json'),'utf8'))).toMatchObject({status:'unknown',code:'IMPLEMENTATION_CI_INPUT_INVALID'});
 });
-function versionFixture(relations) {
- const f=fixture([]);
- mkdirSync(join(f.root,'packages/brain'),{recursive:true});
- writeFileSync(join(f.root,'packages/brain/package.json'),'{"version":"1.2.3"}');
- writeFileSync(join(f.root,'packages/brain/package-lock.json'),'{"version":"1.2.3","packages":{"":{"version":"1.2.3"}}}');
- writeFileSync(join(f.root,'package-lock.json'),'{"packages":{"packages/brain":{"version":"1.2.3"}}}');
- writeFileSync(join(f.root,'DEFINITION.md'),'**Brain 版本**: 1.2.3\n\n## Brain 1.2.3 — old\n');
- const text='{"schema_version":1,"repo":"example/repo","relations": [\n  '+relations.join(',\n  ')+'\n]}\n';
- writeFileSync(join(f.root,'.implementation-source-relations.json'),text);
- return {...f,text};
-}
-const releaseRow='{ "owner_path" : "src/controller.js", "path" : "changes/controller.md", "role" : "release" }';
-const docRow='{ "path" : "docs/controller.md", "role" : "documentation", "owner_path" : "src/controller.js" }';
-const verifyRow='{"owner_path":"src/controller.js", "role":"verification", "path":"scripts/smoke/controller.sh"}';
-it.each([[releaseRow,docRow,verifyRow],[docRow,releaseRow,verifyRow],[docRow,verifyRow,releaseRow],[releaseRow]])('真实版本机器人只消费实际删除片的release关系，保留其他关系原始字节 %j',(...rows)=>{
- const f=versionFixture(rows);
- const result=applyAutoVersion(f.root);
- expect(result).toMatchObject({newVersion:'1.2.4',fragmentsConsumed:1});
- expect(existsSync(join(f.root,'changes/controller.md'))).toBe(false);
- const text=readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8');
- expect(JSON.parse(text).relations).toEqual(rows.filter(row=>row!==releaseRow).map(row=>JSON.parse(row)));
- for(const row of rows.filter(row=>row!==releaseRow))expect(text).toContain(row);
- expect(JSON.parse(readFileSync(join(f.root,'package-lock.json'))).packages['packages/brain'].version).toBe('1.2.4');
- f.git('add','.');f.git('commit','-qm','actual bot consumption');f.source.head_revision=f.git('rev-parse','HEAD');
- expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).not.toThrow();
-});
-it('不消费未实际删除的release路径，也不清理同路径其他角色；严格来源缺失仍拒绝',()=>{
- const otherRelease=releaseRow.replace('controller.md','unconsumed.md');
- const samePathDoc=releaseRow.replace('release','documentation');
- for(const row of [otherRelease,samePathDoc]){
-  const f=versionFixture([row]);applyAutoVersion(f.root);
-  expect(readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8')).toBe(f.text);
-  f.git('add','.');f.git('commit','-qm','missing remains');f.source.head_revision=f.git('rev-parse','HEAD');
-  expect(()=>gate.collectAuxiliarySourceEvidence(f.root,f.source)).toThrow('AUXILIARY_SOURCE_MISSING');
- }
-});
-it('非法声明在版本机器人写入或删除实际片之前拒绝',()=>{
- const f=versionFixture([releaseRow]);
- writeFileSync(join(f.root,'.implementation-source-relations.json'),'{invalid');
- expect(()=>applyAutoVersion(f.root)).toThrow();
- expect(existsSync(join(f.root,'changes/controller.md'))).toBe(true);
- expect(JSON.parse(readFileSync(join(f.root,'packages/brain/package.json'))).version).toBe('1.2.3');
-});
-it('真实机器人消费多个连续release行，保留分隔的文档与验证行字节',()=>{
- const second=releaseRow.replace('controller.md','second.md');
- const third=releaseRow.replace('controller.md','third.md');
- const f=versionFixture([releaseRow,second,docRow,third,verifyRow]);
- for(const file of ['second','third'])writeFileSync(join(f.root,`changes/${file}.md`),'## Brain {VERSION} — extra\n');
- expect(applyAutoVersion(f.root)).toMatchObject({fragmentsConsumed:3,newVersion:'1.2.6'});
- const text=readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8');
- expect(JSON.parse(text).relations).toEqual([JSON.parse(docRow),JSON.parse(verifyRow)]);
- expect(text).toContain(docRow);expect(text).toContain(verifyRow);
-});
-it('版本机器人不跟随来源声明软链接，也拒绝重复JSON键而不删片',()=>{
- for(const invalid of ['symlink','broken-symlink','duplicate-key']){
-  const f=versionFixture([releaseRow]);const manifest=join(f.root,'.implementation-source-relations.json');
-  if(invalid.endsWith('symlink')){
-   rmSync(manifest);symlinkSync(join(f.root,invalid==='symlink'?'docs/controller.md':'missing.json'),manifest);
-  }else writeFileSync(manifest,f.text.replace('"schema_version":1','"schema_version":1,"schema_version":1'));
-  expect(()=>applyAutoVersion(f.root)).toThrow();
-  expect(existsSync(join(f.root,'changes/controller.md'))).toBe(true);
-  expect(JSON.parse(readFileSync(join(f.root,'packages/brain/package.json'))).version).toBe('1.2.3');
- }
-});
-it('本仓库发布片段只登记为release，全部当前辅助关系提供真实Git HEAD/HEAD字节',()=>{
+it('全部当前辅助关系提供真实Git HEAD/HEAD字节，发布片段仅登记为release',()=>{
  const repoRoot=new URL('../../../../../',import.meta.url);
  const manifest=JSON.parse(readFileSync(new URL('.implementation-source-relations.json',repoRoot),'utf8'));
  expect(manifest.relations.filter(row=>row.path.endsWith('.history.mjs'))).toEqual([]);
@@ -95,18 +31,17 @@ it('本仓库发布片段只登记为release，全部当前辅助关系提供真
  }
  writeFileSync(join(f.root,'.implementation-source-relations.json'),JSON.stringify(manifest));
  f.git('add','.');f.git('commit','-qm','actual current auxiliary bytes');const head=f.git('rev-parse','HEAD');
- expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{repo:manifest.repo,base_revision:head,head_revision:head})).not.toThrow();
- for(const path of ['packages/brain/package.json','packages/brain/package-lock.json','package-lock.json','DEFINITION.md']){
-  const target=join(f.root,path);mkdirSync(join(target,'..'),{recursive:true});writeFileSync(target,readFileSync(new URL(path,repoRoot)));
+ const evidence=gate.collectAuxiliarySourceEvidence(f.root,{repo:manifest.repo,base_revision:head,head_revision:head});
+ expect(evidence.base).toEqual(evidence.head);
+ expect(evidence.head.source_revision).toBe(head);
+ expect(evidence.head.relations).toHaveLength(manifest.relations.length);
+ const digest=path=>createHash('sha256').update(readFileSync(join(f.root,path))).digest('hex');
+ expect(evidence.head.manifest_sha256).toBe(digest('.implementation-source-relations.json'));
+ for(const row of manifest.relations){
+  expect(evidence.head.relations.find(actual=>actual.path===row.path)).toMatchObject({
+   ...row,owner_sha256:digest(row.owner_path),sha256:digest(row.path),
+  });
  }
- rmSync(join(f.root,'changes/controller.md'));
- const releases=manifest.relations.filter(row=>row.role==='release'&&/^changes\/cp-.*\.md$/.test(row.path));
- const consumed=applyAutoVersion(f.root);expect(consumed.fragmentsConsumed).toBe(releases.length);
- const remaining=JSON.parse(readFileSync(join(f.root,'.implementation-source-relations.json'),'utf8'));
- expect(remaining.relations).toEqual(manifest.relations.filter(row=>!releases.includes(row)));
- for(const row of releases)expect(existsSync(join(f.root,row.path))).toBe(false);
- f.git('add','.');f.git('commit','-qm','actual new release consumption');const after=f.git('rev-parse','HEAD');
- expect(()=>gate.collectAuxiliarySourceEvidence(f.root,{repo:manifest.repo,base_revision:after,head_revision:after})).not.toThrow();
 });
 it('删除已消费缺件的失效文档关系只修新HEAD，旧Git基线严格保UNKNOWN',()=>{
  const stale={owner_path:'src/controller.js',path:'changes/controller.md',role:'documentation'};
