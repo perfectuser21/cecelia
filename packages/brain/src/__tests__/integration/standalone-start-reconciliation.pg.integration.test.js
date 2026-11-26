@@ -10,7 +10,7 @@ const sourceCommit = 'b'.repeat(40);
 let fixture;
 afterEach(async () => { await fixture?.close(); fixture = null; });
 
-async function blocked101() {
+async function blocked101({reason = 'standalone_start_unconfirmed', holdDevice = false} = {}) {
   const workflowKey = 'douyin_video_discovery';
   fixture = await foundationHttpFixture({ workflowKey, releaseTarget: 'mmv', directInput: true });
   const { registration, release } = await fixture.publish();
@@ -52,10 +52,14 @@ async function blocked101() {
   const scopeProof = { task_id: task.id, run_id: job.run_id, task_run_id: identity.task_run_id,
     run_binding_id: binding.id, source_commit: sourceCommit, snapshot_sha256: 'd'.repeat(64) };
   const revokedAt = new Date().toISOString();
-  const receipt = { task_id: task.id, run_id: job.run_id, status: 'needs_review', evidence: [], reason: 'standalone_start_unconfirmed' };
+  const receipt = { task_id: task.id, run_id: job.run_id, status: 'needs_review', evidence: [], reason };
   const finish = () => fixture.request('/workflow-foundation/standalone/finish', { machine_id: machine, receipt });
   expect((await finish()).body).toEqual({ status: 'blocked' });
-  await fixture.pool.query('INSERT INTO device_locks(device_name) VALUES($1)',[serial]);
+  if (holdDevice) {
+    await fixture.pool.query("INSERT INTO device_locks(device_name,locked_by,locked_at,expires_at) VALUES($1,$2,NOW(),NOW()+INTERVAL '5 minutes')",[serial,task.id]);
+  } else {
+    await fixture.pool.query('INSERT INTO device_locks(device_name) VALUES($1)',[serial]);
+  }
   const blocked = await state();
   const body = { task_id: task.id, machine_id: machine, blocked_at: blocked.blocked_at.toISOString(),
     expected_receipt_sha256: digest(receipt), expected_attestation_sha256: digest(identity), review: {
@@ -173,3 +177,80 @@ it('拒绝他机、过期、漂移、原生效果及存活 holder/计划；末�
   expect(await f.state()).toMatchObject({status:'blocked',result:{standalone_receipt:oldReceipt}});
   expect(await f.run()).toMatchObject({status:'running',ended_at:null});
 },30000);
+
+async function desktopCleanupReview(holdDevice = true) {
+  const f = await blocked101({reason:'standalone_cleanup_unconfirmed',holdDevice});
+  const now = new Date();
+  const readOnly = [['version'],['version'],['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555','get-state']];
+  const makeLeaf = (args,index) => {
+    const at = +now + index;
+    return {sequence:index+1,argv_sha256:createHash('sha256').update(JSON.stringify(args)).digest('hex'),
+      intent_at:at,started_at:at,ended_at:at,boundary:'darwin-sandbox-deny-process-fork-v1',pid:40+index,
+      code:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true};
+  };
+  const cleanup = {task_id:f.task.id,run_id:f.job.run_id,execution_mode:'codex-direct',
+    native_return_unknown:true,quarantine_verified:true,local_released:false,central_released:false,desktop:null,
+    leaves:{complete:true,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,
+      ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-abc123.jsonl',
+      leaves:readOnly.map(makeLeaf)}};
+  const readLock = async () => (await fixture.pool.query("SELECT device_name,locked_by,xmin::text AS version FROM device_locks WHERE device_name=$1",[serial])).rows[0];
+  const lock = await readLock();
+  // Fixture can freeze all observations at one instant. Production requires the original leaves before revocation.
+  const cutoff = new Date(+now + readOnly.length).toISOString();
+  const touched = await fixture.pool.query('UPDATE tasks SET blocked_at=$2 WHERE id=$1 RETURNING blocked_at',[f.task.id,cutoff]);
+  Object.assign(f.body,{blocked_at:touched.rows[0].blocked_at.toISOString()});
+  Object.assign(f.body.review,{protocol:'standalone-pre-native-cleanup-review/v1',admission_code:'DESKTOP_UNKNOWN',
+    observed_at:cutoff,revocation:{...f.body.review.revocation,reason:'DESKTOP_UNKNOWN',observed_at:cutoff}});
+  const seal = raw => ({raw,sha256:createHash('sha256').update(raw).digest('hex')});
+  f.body.review.cleanup_diagnostic = {
+    ...seal(JSON.stringify(cleanup)),adb_endpoint:'tcp:127.0.0.1:5045',adb_serial:'127.0.0.1:15555',central_lease_version:lock.version,
+    desktop_readback:{serial,default_home:'com.android.launcher3/.Launcher',focused_activity:'com.android.launcher3/com.android.launcher3.Launcher',observed_at:cutoff},
+  };
+  return {...f,readLock,cleanup,seal};
+}
+
+it('settles the original 101 after only returned read-only cleanup probes and releases its exact central lock', async () => {
+  const f = await desktopCleanupReview();
+  expect((await f.readLock()).locked_by).toBe(f.task.id);
+  const result = await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect(result.body).toMatchObject({status:'failed',run_id:f.job.run_id,replayed:false,retry_safe:false});
+  expect((await f.state()).result.standalone_receipt).toEqual(f.receipt);
+  expect((await f.state()).result.standalone_start_review).toMatchObject({
+    admission_code:'DESKTOP_UNKNOWN',cleanup_diagnostic_sha256:f.body.review.cleanup_diagnostic.sha256,
+    observed_central_lease_version:f.body.review.cleanup_diagnostic.central_lease_version,central_release_performed:true,
+  });
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.readLock()).locked_by).toBeNull();
+  expect((await f.reconcile()).body.replayed).toBe(true);
+  expect((await f.finish()).body.status).toBe('blocked');
+});
+
+it('keeps the original 101 blocked for an uncertified cleanup leaf, desktop mismatch, or changed central version', async () => {
+  const f = await desktopCleanupReview();
+  const original = structuredClone(f.body);
+  const invalidLeaf = structuredClone(f.cleanup);
+  invalidLeaf.leaves.leaves[0].argv_sha256 = createHash('sha256').update(JSON.stringify(['shell','input','keyevent','3'])).digest('hex');
+  Object.assign(f.body.review.cleanup_diagnostic,f.seal(JSON.stringify(invalidLeaf)));
+  expect((await f.reconcile()).status).toBe(400);
+  Object.assign(f.body,structuredClone(original));
+  f.body.review.cleanup_diagnostic.desktop_readback.focused_activity = 'com.android.launcher3/.OtherActivity';
+  expect((await f.reconcile()).status).toBe(400);
+  Object.assign(f.body,structuredClone(original));
+  f.body.review.cleanup_diagnostic.central_lease_version = '1';
+  expect((await f.reconcile()).status).toBe(409);
+  expect((await f.state()).status).toBe('blocked');
+  expect((await f.run()).status).toBe('running');
+  expect((await f.readLock()).locked_by).toBe(f.task.id);
+});
+
+it('settles a fresh already-free central lock without rewriting it', async () => {
+  const f = await desktopCleanupReview(false);
+  const before = await f.readLock();
+  expect(before.locked_by).toBeNull();
+  const result = await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect(await f.readLock()).toEqual(before);
+  expect((await f.state()).result.standalone_start_review.central_release_performed).toBe(false);
+  expect((await f.run()).status).toBe('failed');
+});

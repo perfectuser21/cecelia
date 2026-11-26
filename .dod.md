@@ -1,15 +1,8 @@
-# 清退旧OpenClaw周期读取与群聊补账
+# 悦升 101 收尾复核
 
-Task: 34abb43c-46c0-4c54-9154-702adb64fc98
-GP-Anchor: none(infra)
+- [x] 原运行只能是 101 独立 Skill，原任务、TaskRun、冻结绑定、已退出宿主及隔离本机锁须匹配。
+- [x] 同次只存在已回执的 ADB 只读探针。原清理收据原字节、新鲜的默认桌面读回及零业务效果共同支持复核。
+- [x] 原中央锁按设备、owner 与版本条件清理。已空闲的同版本保持空闲。旧收据和复核历史保留。
+- [x] 独立 PostgreSQL HTTP 回归覆盖正常结算、无修改的读回、幂等重试、错误桌面、非只读 adb 和租约版本变化。
 
-- [x] 真实默认调度轮退出OpenClaw运行采集与旧bot飞书补账，Notion及手机审计继续执行。
-  Test: manual:npx --no-install vitest run --root packages/brain src/__tests__/scheduler-jobs.test.js
-- [x] bypass入口零SQLite/SSH调用，手机事件、查询、汇总、Bark确认回执与锁权限边界保留。
-  Test: manual:npx --no-install vitest run --root packages/brain src/__tests__/bypass-audit.test.js src/__tests__/bypass-bark-receipt.test.js src/routes/__tests__/bypass-actions.test.js
-- [x] UTF16截断等价迁移，历史OpenClaw Runs投影仍可正确构造，历史数据与收结入口不改。
-  Test: manual:npx --no-install vitest run --root packages/brain src/lib/__tests__/truncate-text.test.js src/__tests__/runs-notion-projection.test.js
-- [x] Notion入账、员工飞书任务路由、native与手机Registry/grants回归保留；退役回归经业务变异证明。
-  Test: manual:npx --no-install vitest run --root packages/brain src/__tests__/notion-gtd-sync src/__tests__/notion-push-sync src/__tests__/p2p-query-dispatch.test.js src/__tests__/native-agent-executor.test.js src/phone-dispatch
-- [x] 当前manifest完整采集通过，默认1802/deep329；继承Worker fixture35例与外部新源码，版本事实及Scripts通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+Brain Task 7ea9603c-73fb-4b04-b360-5ee5cae849fb

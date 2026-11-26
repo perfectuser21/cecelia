@@ -6,6 +6,7 @@ import { digest } from '../orchestrator/commander-decision.js';
 import { validateMachineRequest } from './claim.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
+import { desktopCleanupFailure, desktopUnknown, verifyDesktopCleanupProof } from './standalone-cleanup-review.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
@@ -64,7 +65,8 @@ function verifyRequest(runId, input) {
   validateMachineRequest(input, ['task_id','machine_id','blocked_at','expected_receipt_sha256','expected_attestation_sha256','review']);
   const review = input.review;
   onlyKeys(review, ['protocol','observed_at','evidence_sha256','admission_code','host_process_exited','native_operations',
-    'business_effects','local_lock','host_proof','revocation','hardware_diagnostic']);
+    'business_effects','local_lock','host_proof','revocation','hardware_diagnostic','cleanup_diagnostic']);
+  const desktopCleanup = review.protocol === 'standalone-pre-native-cleanup-review/v1';
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
   onlyKeys(revocation, ['protocol',...proofIdentity,'pid','reason','observed_at']);
@@ -73,25 +75,27 @@ function verifyRequest(runId, input) {
   invalid(UUID.test(runId ?? '') && UUID.test(input.task_id ?? '')
     && [input.expected_receipt_sha256,input.expected_attestation_sha256,review.evidence_sha256,host.snapshot_sha256].every(x=>typeof x==='string'&&hash.test(x))
     && [input.blocked_at,review.observed_at,revocation.observed_at].every(evidenceTime)
-    && review.protocol === 'standalone-pre-native-review/v1'
+    && (desktopCleanup || review.protocol === 'standalone-pre-native-review/v1')
     && review.host_process_exited === true && review.native_operations === 0 && review.business_effects === 0
     && review.local_lock.owner === runId && review.local_lock.review_required === true
     && host.protocol === 'standalone-skill-host-proof/v1' && revocation.protocol === 'standalone-skill-host-revocation/v1'
     && host.task_id === input.task_id && host.run_id === runId && [host.task_run_id,host.run_binding_id].every(x=>UUID.test(x??''))
     && commit.test(host.source_commit ?? '') && proofIdentity.every(key=>host[key]===revocation[key])
-    && revocation.reason === 'ADMISSION_REJECTED' && validPid(host.process_identity.pid) && validPid(host.process_identity.pgid)
+    && revocation.reason === (desktopCleanup ? desktopUnknown : 'ADMISSION_REJECTED') && validPid(host.process_identity.pid) && validPid(host.process_identity.pgid)
     && validPid(host.process_identity.ppid) && Number.isSafeInteger(host.process_identity.uid) && host.process_identity.uid >= 0
     && typeof host.process_identity.start_identity === 'string' && host.process_identity.start_identity.length > 0
     && host.process_identity.start_identity.length <= 200 && revocation.pid === host.process_identity.pid
     && typeof host.run_directory === 'string' && host.run_directory.startsWith('/') && host.run_directory.endsWith('/'+runId)
     && host.run_directory.length <= 1024 && !/[\r\n\0]/.test(host.run_directory));
-  return verifyHardwareTimeout(review,input.task_id);
+  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host) };
+  invalid(review.cleanup_diagnostic === undefined);
+  return { failureReason: startFailure, hardwareTimeout: verifyHardwareTimeout(review,input.task_id) };
 }
 
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
-  const hardwareTimeout = verifyRequest(runId,input);
+  const { failureReason, hardwareTimeout, cleanup } = verifyRequest(runId,input);
   const requestSha = digest(input), review = input.review, host = review.host_proof;
   return foundationTransaction(pool, 'notion-standalone:'+input.machine_id, async db => {
     const task = (await db.query("SELECT * FROM tasks WHERE id=$1 AND task_type='workflow_dispatch' AND payload->>'source'='notion_leadgen_101' FOR UPDATE",[input.task_id])).rows[0];
@@ -100,7 +104,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
     check(claim?.task_id === input.task_id && claim.run_id === runId && claim.machine_id === input.machine_id
       && claim.claimer === 'standalone:'+input.machine_id && claim.tenant_id === task.tenant_id
       && task.payload.foundation_request?.machine_id === input.machine_id && task.payload.execution_mode === 'standalone-skill'
-      && receipt?.task_id === task.id && receipt.run_id === runId && receipt.status === 'needs_review' && receipt.reason === startFailure
+      && receipt?.task_id === task.id && receipt.run_id === runId && receipt.status === 'needs_review' && receipt.reason === failureReason
       && Array.isArray(receipt.evidence) && receipt.evidence.length === 0 && digest(receipt) === input.expected_receipt_sha256
       && attestation?.protocol === 'codex-exec-v1' && attestation.task_id === task.id && attestation.run_id === runId
       && attestation.machine_id === claim.machine_id && attestation.claimer === claim.claimer && attestation.claimed_at === claim.claimed_at
@@ -143,8 +147,12 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && binding.workflow_id === ref.workflow_id && binding.workflow_definition_version_id === ref.workflow_definition_version_id);
     const serial = scope.serial;
     check(typeof serial === 'string' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(serial));
-    const locks = (await db.query('SELECT device_name,locked_by FROM device_locks WHERE device_name=$1 OR locked_by IN ($2,$3) FOR UPDATE',[serial,task.id,runId])).rows;
-    check(locks.length === 1 && locks[0].device_name === serial && locks[0].locked_by === null,'standalone_start_review_active_resources');
+    const locks = (await db.query('SELECT device_name,locked_by,xmin::text AS lease_version FROM device_locks WHERE device_name=$1 OR locked_by IN ($2,$3) FOR UPDATE',[serial,task.id,runId])).rows;
+    const [deviceLock] = locks;
+    check(locks.length === 1 && deviceLock.device_name === serial
+      && (deviceLock.locked_by === null || cleanup && deviceLock.locked_by === task.id)
+      && (!cleanup || cleanup.serial === serial && cleanup.firstIntentAt >= +run.started_at
+        && cleanup.leaseVersion === deviceLock.lease_version),'standalone_start_review_active_resources');
     const { active } = (await db.query(`SELECT
       EXISTS (SELECT 1 FROM task_runs WHERE task_id=$1 AND run_id<>$2 AND ended_at IS NULL)
       OR EXISTS (SELECT 1 FROM task_leases WHERE task_id=$1 AND released_at IS NULL)
@@ -153,18 +161,26 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       OR EXISTS (SELECT 1 FROM pending_actions WHERE status='pending_approval' AND (expires_at IS NULL OR expires_at>NOW())
         AND (params->>'task_id'=$1::text OR params->>'run_id'=$2 OR params->>'device_name'=$3)) AS active`,[task.id,runId,serial])).rows[0];
     check(active === false,'standalone_start_review_active_resources');
+    const releaseCentral = Boolean(cleanup && deviceLock.locked_by === task.id);
+    if (releaseCentral) {
+      const released = await db.query(`UPDATE device_locks SET locked_by=NULL, locked_at=NULL, expires_at=NULL
+        WHERE device_name=$1 AND locked_by=$2 AND xmin::text=$3 RETURNING device_name`,[serial,task.id,cleanup.leaseVersion]);
+      check(released.rowCount === 1,'standalone_start_review_active_resources');
+    }
 
     const settlement = { protocol:'standalone-start-failure-settlement/v1', source:principal, task_id:task.id, run_id:runId,
       task_run_id:run.id, run_binding_id:binding.id, receipt_sha256:input.expected_receipt_sha256,
       attestation_sha256:input.expected_attestation_sha256, request_sha256:requestSha, retry_safe:false,
       observed_at:review.observed_at, evidence_sha256:review.evidence_sha256,
       host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code,
-      ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}) };
-    const finished = await finishRun({runId,status:'failed',error:startFailure,result:{standalone_start_review:settlement}},
+      ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}),
+      ...(cleanup ? { cleanup_diagnostic_sha256:cleanup.sha256, observed_central_lease_version:cleanup.leaseVersion,
+        central_release_performed:releaseCentral } : {}) };
+    const finished = await finishRun({runId,status:'failed',error:failureReason,result:{standalone_start_review:settlement}},
       {pool:db,strict:true,emit:async()=>{}});
     check(finished.updated,'standalone_start_review_write_unconfirmed');
     const closed = await finalizeTask(db,task.id,'failed',{relay:false,onlyIfStatus:'blocked',set:{completed_at:'now'},
-      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha}});
+      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason}});
     check(closed.rowCount === 1,'standalone_start_review_write_unconfirmed');
     return response(false);
   });

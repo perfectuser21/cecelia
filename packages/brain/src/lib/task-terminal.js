@@ -211,12 +211,14 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   const standalone=opts.standaloneReconciliation;
   const standaloneStartFailure=opts.standaloneStartFailureReconciliation;
   if(standaloneStartFailure!==undefined){
+    const receiptReason=standaloneStartFailure.receiptReason??'standalone_start_unconfirmed';
+    if(!['standalone_start_unconfirmed','standalone_cleanup_unconfirmed'].includes(receiptReason))throw Error('standalone_terminal_proof_invalid');
     if(foundation!==undefined||standalone!==undefined||taskId==null||status!=='failed'
       ||!/^[a-f0-9-]{36}$/.test(standaloneStartFailure.runId??'')||!/^[a-f0-9]{64}$/.test(standaloneStartFailure.requestSha??''))throw Error('standalone_terminal_proof_invalid');
     where.push(`payload->>'source'='notion_leadgen_101'
       AND result#>>'{standalone_claim,run_id}'=$${push(standaloneStartFailure.runId)}
       AND result#>>'{codex_skill_direct,run_id}'=result#>>'{standalone_claim,run_id}'
-      AND result#>>'{standalone_receipt,reason}'='standalone_start_unconfirmed'
+      AND result#>>'{standalone_receipt,reason}'=$${push(receiptReason)}
       AND result#>>'{standalone_receipt,status}'='needs_review'
       AND EXISTS(SELECT 1 FROM task_runs sr WHERE sr.task_id=tasks.id AND sr.run_id=tasks.result#>>'{standalone_claim,run_id}'
         AND sr.ended_at IS NOT NULL AND sr.status='failed' AND sr.context->>'source'='standalone-skill'
