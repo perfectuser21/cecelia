@@ -95,7 +95,8 @@ describe('提案系统核心', () => {
       const count = await expireStaleProposals();
       expect(count).toBe(3);
       expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining("SET status = 'expired'")
+        expect.stringContaining("SET status = 'expired'"),
+        ['yuesheng_adb_migration']
       );
     });
 
