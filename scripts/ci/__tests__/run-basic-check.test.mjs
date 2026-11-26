@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync, readFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync, mkdirSync, copyFileSync, writeFileSync, realpathSync, readFileSync, readdirSync, symlinkSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -247,4 +247,45 @@ for (const failure of [null, 'lint', 'fleet', 'smoke']) test(`第三片真实守
     assert.equal(vitest.length, 6);
     for (let shard = 1; shard <= 6; shard++) assert.ok(vitest[shard - 1].includes(`--shard=${shard}/6`));
   }
+});
+
+for (const failure of [false, true]) test(`安装器经真实第三片CLI和GP Vitest只执行一次：${failure ? '退出29阻断' : '成功'}`, t => {
+  const f = isolatedBrainSafety(t);
+  const fleet = join(f.directory, 'packages/brain/scripts/fleet-worker');
+  const sourceFleet = new URL('../../../packages/brain/scripts/fleet-worker/', import.meta.url);
+  for (const name of readdirSync(sourceFleet)) {
+    if (/\.(cjs|json)$/.test(name) || name === 'install-fleet-worker.sh') {
+      copyFileSync(new URL(name, sourceFleet), join(fleet, name));
+    }
+  }
+  rmSync(join(fleet, 'private.test.sh'));
+  const gp = 'tests/gp/f1/step3-installer-ships-worker-runtime.test.js';
+  mkdirSync(join(f.directory, 'tests/gp/f1'), { recursive: true });
+  copyFileSync(new URL(`../../../${gp}`, import.meta.url), join(f.directory, gp));
+  symlinkSync(new URL('../../../node_modules', import.meta.url).pathname, join(f.directory, 'node_modules'), 'dir');
+  symlinkSync(new URL('../../../packages/brain/src', import.meta.url).pathname, join(f.directory, 'packages/brain/src'), 'dir');
+  const marker = join(f.directory, 'installer-events');
+  writeFileSync(join(fleet, 'install-fleet-worker.test.sh'),
+    '# installed_orchestrator_runner: scheduling fixture; installer behavior has its own shell suite\n' +
+    'printf "installer\\n" >> "$CI_GUARD_EVENTS"\nprintf "PASS: Fleet Worker installer behavioral contract\\n"\nexit ' + (failure ? 29 : 0) + '\n');
+  writeFileSync(join(f.suite, 'real.node-test.mjs'),
+    "import {appendFileSync} from 'node:fs'; appendFileSync(process.env.CI_GUARD_EVENTS, 'smoke\\n');\n");
+  const config = join(f.directory, 'vitest.config.mjs');
+  writeFileSync(config, `export default ${JSON.stringify({root: f.directory,
+    test: {include: [gp], pool: 'forks', maxWorkers: 1, minWorkers: 1}})};\n`);
+  const bin = join(f.directory, 'bin');
+  mkdirSync(bin);
+  executable(join(bin, 'npm'), 'exit 0\n');
+  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+  executable(join(bin, 'npx'), 'printf "vitest\\n" >> "$CI_GUARD_EVENTS"\nexec ' +
+    [process.execPath, new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url).pathname,
+      'run', '--config', config]
+      .map(quote).join(' ') + '\n');
+  const env = {...process.env, PATH: bin + ':' + process.env.PATH, CI_GUARD_EVENTS: marker};
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, [join(f.ci, 'run-basic-check.mjs'), 'brain-unit', '3'],
+    {cwd: f.directory, encoding: 'utf8', env, timeout: 30000});
+  assert.equal(result.status, failure ? 29 : 0, result.stdout + result.stderr);
+  assert.deepEqual(readFileSync(marker, 'utf8').trim().split('\n'),
+    failure ? ['installer'] : ['installer', 'smoke', 'vitest']);
 });
