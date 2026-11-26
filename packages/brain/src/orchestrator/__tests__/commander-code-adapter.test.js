@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
+import {frozenNodeCommand} from './fixtures/frozen-node-command.js';
 import {createRunLedger} from '../commander-usage-ledger.js';
 const roots=[];
 afterEach(()=>{for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
@@ -13,7 +14,8 @@ function fixture(){
  fs.writeFileSync(path.join(root,'owned-resource'),'owned');
  fs.writeFileSync(path.join(root,'work.js'),`const fs=require('fs');let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const i=JSON.parse(s);fs.appendFileSync('executions.jsonl',JSON.stringify({input:i,argv:process.argv.slice(2)})+'\\n');if(i.mode==='hang'){setInterval(()=>{},1000);return;}fs.rmSync('owned-resource',{force:true});const r={schema_version:1,run_tag:i.run_tag,line_key:i.line_key,status:'completed',outputs:{released:true},metrics:{count:1},evidence:['owned-resource'],execution_stopped:true,...i.result};console.log(i.mode==='invalid'?'not-json':JSON.stringify(r));process.exitCode=i.mode==='nonzero'?2:0;});`);
  fs.writeFileSync(path.join(root,'check.cjs'),`const fs=require('fs');let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const r=JSON.parse(s),released=!fs.existsSync('owned-resource'),good=r.phase==='start'||released;console.log(JSON.stringify({identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,r[k]])),nonce:r.context.bad_nonce?'wrong':r.nonce,outcome:'passed',checks:r.checks.map(id=>({id,status:good&&!r.context.check_failed?'passed':'failed',evidence:[{source:'owned-resource',observation:{released}}]})),output:r.phase==='start'?{}:{released:true}}));});`);
- const checker={command:process.execPath,command_sha256:sha(process.execPath),entry:'check.cjs',start_checks:['owner'],required_checks:['released']};
+ const nodeCommand=frozenNodeCommand(root);
+ const checker={...nodeCommand,entry:'check.cjs',start_checks:['owner'],required_checks:['released']};
  const profile={cwd:root,files:Object.fromEntries(['work.js','check.cjs'].map(f=>[f,sha(path.join(root,f))])),skill_runtime:{control_dir:'control',activities:{cleanup:{checker}}}};
  const activity={key:'cleanup',order:1,budget:{max_duration_s:5,heartbeat_s:1},failure:{empty_ok:[],retryable:[],fatal:['error'],needs_human:{cases:[]}},runtime:{phase:'source',executor_kind:'code',entry:'work.js',argv:['fixed-arg'],interactive:false,protocol:'json-stdio-v1',cleanup_grace_s:1}};
  const run={task_id:randomUUID(),run_id:randomUUID(),input:{run_tag:'tag'},contract:{workflow:'code-fixture',activities:[activity]}};
@@ -118,7 +120,7 @@ function addAgent(f){
  write('skill.txt','生成一个经过独立核验的源活动结果');write('tools.txt','只允许本地隔离夹具');
  write('codex.cjs',`const fs=require('fs');process.stdin.resume();process.stdin.on('end',()=>{fs.appendFileSync('model-calls','1\\n');fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1],'{}');console.log(JSON.stringify({type:'thread.started',thread_id:'fixture-thread'}));});`);
  write('source-check.cjs',fs.readFileSync(path.join(f.root,'check.cjs'),'utf8').replace("good=r.phase==='start'||released","good=true").replace("output:r.phase==='start'?{}:{released:true}","output:r.phase==='start'?{}:{source_verified:true}"));
- const config=f.profile.skill_runtime;config.tools='tools.txt';config.codex={command:process.execPath,command_sha256:sha(process.execPath),args:[path.join(f.root,'codex.cjs')]};
+ const config=f.profile.skill_runtime;config.tools='tools.txt';config.codex={command:config.activities.cleanup.checker.command,command_sha256:config.activities.cleanup.checker.command_sha256,args:[path.join(f.root,'codex.cjs')]};
  config.activities.source={skill:'skill.txt',checker:{...config.activities.cleanup.checker,entry:'source-check.cjs'}};
  return {...f.activity,key:'source',order:1,runtime:{...f.activity.runtime,executor_kind:'agent'}};
 }
@@ -191,8 +193,8 @@ test('源活动超时后凭同动作原生终态证据自动归位，业务失�
   const file=path.join(f.root,name);fs.writeFileSync(file,source);f.profile.files[name]=sha(file);
  }
  const cleanup=f.profile.skill_runtime.activities.cleanup;
- f.profile.skill_runtime.activities.source={checker:cleanup.checker,stop_checker:{command:process.execPath,
-  command_sha256:sha(process.execPath),entry:'stop-check.cjs',timeout_ms:4500}};
+ f.profile.skill_runtime.activities.source={checker:cleanup.checker,stop_checker:{command:cleanup.checker.command,
+  command_sha256:cleanup.checker.command_sha256,entry:'stop-check.cjs',timeout_ms:4500}};
  const source={...f.activity,key:'source',runtime:{...f.activity.runtime,entry:'slow-source.js'}};
  f.activity={...f.activity,order:2,runtime:{...f.activity.runtime,phase:'finalize'}};f.run.contract.activities=[source,f.activity];
  const out=await workflow(f,undefined,{businessMs:5200,cleanupMs:20000});
@@ -217,3 +219,22 @@ test('源活动超时后凭同动作原生终态证据自动归位，业务失�
  expect(fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n')).toHaveLength(1);
  expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(false);
 },25000);
+
+test('冻结测试启动器源码漂移时真实runtime拒绝执行',async()=>{
+ const f=fixture(),runtime=await createRuntime(f);
+ fs.appendFileSync(f.profile.skill_runtime.activities.cleanup.checker.command,'\n# drift\n');
+ await expect(runtime.executeActivity(f.activity,f.input,f.options)).rejects.toThrow('skill_profile_unfrozen');
+ expect(fs.existsSync(path.join(f.root,'executions.jsonl'))).toBe(false);
+ expect(fs.existsSync(path.join(f.root,'owned-resource'))).toBe(true);
+});
+
+test('冻结测试启动器安全转发含空格与单引号的Node路径',async()=>{
+ const f=fixture(),node=path.join(f.root,"node ' quoted");
+ fs.symlinkSync(process.execPath,node);
+ Object.assign(f.profile.skill_runtime.activities.cleanup.checker,frozenNodeCommand(f.root,node));
+ const runtime=await createRuntime(f),result=await runtime.executeActivity(f.activity,f.input,f.options);
+ expect(result.status).toBe('completed');
+ expect((await runtime.checkActivity(f.activity,result,{phase:'end',input:f.input})).verdict).toBe('pass');
+ const calls=fs.readFileSync(path.join(f.root,'executions.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+ expect(calls).toEqual([{input:f.input,argv:['fixed-arg']}]);
+});

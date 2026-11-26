@@ -5,6 +5,7 @@ import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createCodexCommander} from '../commander-codex.js';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
+import {frozenNodeCommand} from './fixtures/frozen-node-command.js';
 const roots=[];afterEach(()=>{vi.unstubAllEnvs();for(const root of roots.splice(0))fs.rmSync(root,{recursive:true,force:true});});
 const sha=file=>createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 function fixture(){
@@ -16,7 +17,8 @@ function fixture(){
  fs.writeFileSync(path.join(root,'skill.txt'),'执行本次活动');fs.writeFileSync(path.join(root,'tools.txt'),'本地夹具');
  fs.writeFileSync(path.join(root,'check.cjs'),`let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const r=JSON.parse(s);console.log(JSON.stringify({identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,r[k]])),nonce:r.nonce,outcome:'passed',checks:r.checks.map(id=>({id,status:'passed',evidence:[{source:'fixture',observation:{exists:true}}]})),output:{checked:true}}));});`);
  fs.writeFileSync(path.join(root,'work.js'),`let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>console.log(JSON.stringify({schema_version:1,run_tag:JSON.parse(s).run_tag,status:'completed',outputs:{checked:true},metrics:{},evidence:[],execution_stopped:true})));`);
- const checker={command:process.execPath,command_sha256:sha(process.execPath),entry:'check.cjs',start_checks:['authority'],required_checks:['product']};
+ const nodeCommand=frozenNodeCommand(root);
+ const checker={...nodeCommand,entry:'check.cjs',start_checks:['authority'],required_checks:['product']};
  const auth={mode:'api-only',home};
  const profile={cwd:root,codex_auth:auth,files:Object.fromEntries(['skill.txt','tools.txt','check.cjs','work.js'].map(f=>[f,sha(path.join(root,f))])),skill_runtime:{control_dir:'control',tools:'tools.txt',codex:{command:bin,command_sha256:sha(bin)},activities:{one:{skill:'skill.txt',checker}}}};
  const run={task_id:'task',run_id:'run',input:{run_tag:'tag'},contract:{workflow:'fixture'}};

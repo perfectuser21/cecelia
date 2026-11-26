@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {createHash} from 'node:crypto';
 import {createRuntime} from '../../../scripts/commander-workflow/skill-adapter.mjs';
+import {frozenNodeCommand} from './fixtures/frozen-node-command.js';
 import {loadCommanderManifest} from '../../../scripts/commander-workflow/host.mjs';
 
 const roots=[];
@@ -29,7 +30,8 @@ process.stdin.on('data',d=>prompt+=d);process.stdin.on('end',()=>{
  fs.writeFileSync(path.join(root,'skill.txt'),'仅执行指定活动');fs.writeFileSync(path.join(root,'tools.txt'),'测试工具');
  fs.writeFileSync(path.join(root,'check.cjs'),`let s='';process.stdin.on('data',d=>s+=d);process.stdin.on('end',()=>{const r=JSON.parse(s);console.log(JSON.stringify({identity:Object.fromEntries(['task_id','run_id','run_tag','workflow','activity','attempt'].map(k=>[k,r[k]])),nonce:r.nonce,outcome:'passed',checks:r.checks.map(id=>({id,status:'passed',evidence:[{source:'fixture',observation:{exists:true}}]})),output:{checked:true}}));});`);
  fs.writeFileSync(path.join(root,'work.js'),'// 冻结的Activity入口');
- const checker={command:process.execPath,command_sha256:hash(process.execPath),entry:'check.cjs',start_checks:['authority'],required_checks:['product']};
+ const nodeCommand=frozenNodeCommand(root);
+ const checker={...nodeCommand,entry:'check.cjs',start_checks:['authority'],required_checks:['product']};
  const profile={cwd:root,codex_auth:{mode:'api-only',home},files:Object.fromEntries(['skill.txt','tools.txt','check.cjs','work.js'].map(f=>[f,hash(path.join(root,f))])),skill_runtime:{control_dir:'control',tools:'tools.txt',codex:{command:bin,command_sha256:hash(bin)},activities:{}}};
  const run={task_id:'task',run_id:'run',input:{run_tag:'tag'},contract:{workflow:'fixture'}};
  function activity(key,group,kind='agent'){
