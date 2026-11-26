@@ -1,4 +1,5 @@
 import {reconcileNativeAgentResources} from '../lib/native-agent-resource-reconciliation.js';
+import {reconcileStandaloneStartFailure} from '../workflow-foundation/standalone-start-reconciliation.js';
 import { Router, json } from 'express';
 import defaultPool from '../db.js';
 import { internalAuth, internalAuthOrLoopback } from '../middleware/internal-auth.js';
@@ -31,6 +32,13 @@ export function createRunReconciliationRouter({pool=defaultPool,nativeTransport}
   },async(req,res)=>{
     try{res.json(await reconcileNativeAgentResources(pool,req.params.run_id,req.body,{principal:'authenticated-operator',...(nativeTransport?{transport:nativeTransport}:{})}));}
     catch(error){res.status(error.status??503).json({error:error.code??'native_agent_cleanup_unknown'});}
+  });
+  router.post('/:run_id/standalone-start-reconciliation',json({limit:'32kb'}),(req,res,next)=>{
+    if(!process.env.CECELIA_INTERNAL_TOKEN)return res.status(503).json({error:'standalone_start_review_auth_unconfigured'});
+    return internalAuth(req,res,next);
+  },async(req,res)=>{
+    try{res.json(await reconcileStandaloneStartFailure(pool,req.params.run_id,req.body,{principal:'authenticated-operator'}));}
+    catch(error){res.status(error.status??503).json({error:error.code&&error.status?error.code:'standalone_start_review_unknown'});}
   });
   router.get('/:run_id/reconciliation',internalAuthOrLoopback,async(req,res)=>{
     try{res.json(await readRunReconciliation(pool,req.params.run_id));}catch(error){sendReleaseError(res,error);}

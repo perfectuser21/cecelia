@@ -122,7 +122,11 @@ export async function finishStandaloneNotionTask(pool, input) {
     const status = receipt.status === 'completed' ? 'completed' : 'blocked';
     const stored = task.result.standalone_receipt;
     if (stored) {
-      requireFoundation(task.status === status && digest(stored) === digest(receipt), 'standalone_receipt_conflict');
+      const reviewedStart = task.status === 'failed' && status === 'blocked' && task.payload.source === 'notion_leadgen_101'
+        && task.result.standalone_start_review?.protocol === 'standalone-start-failure-settlement/v1'
+        && task.result.standalone_start_review.run_id === receipt.run_id
+        && task.result.standalone_start_review?.receipt_sha256 === digest(receipt);
+      requireFoundation((task.status === status || reviewedStart) && digest(stored) === digest(receipt), 'standalone_receipt_conflict');
       return { status, replayed:true };
     }
     requireFoundation(task.status === 'in_progress' && task.claimed_by === 'standalone:' + input.machine_id, 'standalone_claim_conflict');
