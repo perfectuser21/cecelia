@@ -170,6 +170,7 @@ jobs:
         run: >-
           npx vitest run --config vitest.integration.config.js
           src/__tests__/integration/workflow-foundation.pg.integration.test.js
+          src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
           src/__tests__/integration/foundation-legacy-entrances.pg.integration.test.js
           --maxWorkers=1 --minWorkers=1
         if: '!cancelled()'

@@ -5,6 +5,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {spawn,spawnSync} from 'node:child_process';
 import {createReleasesRouter} from '../../routes/releases.js';
 import {createRunDefinitionsRouter} from '../../routes/run-definitions.js';
+import {createRunReconciliationRouter} from '../../routes/run-reconciliation.js';
 import {createWorkflowFoundationRouter} from '../../routes/workflow-foundation.js';
 import {workflowFoundationDatabase} from './workflow-foundation-db.js';
 import processState from '../../orchestrator/activity-supervisor-state.cjs';
@@ -19,6 +20,7 @@ export async function foundationHttpFixture(options={}){
  const app=express();app.use(express.json());
  app.use('/api/brain/releases',createReleasesRouter({pool:db.pool,trustedCollectors:['fixture-collector']}));
  app.use('/api/brain/runs',createRunDefinitionsRouter({pool:db.pool}));
+ app.use('/api/brain/runs',createRunReconciliationRouter({pool:db.pool}));
  app.use('/api/brain/workflow-foundation',createWorkflowFoundationRouter({pool:db.pool,services:{env}}));
  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
  const base=`http://127.0.0.1:${server.address().port}`,children=[];

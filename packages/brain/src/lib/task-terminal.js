@@ -209,7 +209,19 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   // foundation只接服务端核验记录；无ready时仅允许已确认未授权启动的失败。
   const foundation=opts.foundationReconciliation;
   const standalone=opts.standaloneReconciliation;
-  if(standalone!==undefined){
+  const standaloneStartFailure=opts.standaloneStartFailureReconciliation;
+  if(standaloneStartFailure!==undefined){
+    if(foundation!==undefined||standalone!==undefined||taskId==null||status!=='failed'
+      ||!/^[a-f0-9-]{36}$/.test(standaloneStartFailure.runId??'')||!/^[a-f0-9]{64}$/.test(standaloneStartFailure.requestSha??''))throw Error('standalone_terminal_proof_invalid');
+    where.push(`payload->>'source'='notion_leadgen_101'
+      AND result#>>'{standalone_claim,run_id}'=$${push(standaloneStartFailure.runId)}
+      AND result#>>'{codex_skill_direct,run_id}'=result#>>'{standalone_claim,run_id}'
+      AND result#>>'{standalone_receipt,reason}'='standalone_start_unconfirmed'
+      AND result#>>'{standalone_receipt,status}'='needs_review'
+      AND EXISTS(SELECT 1 FROM task_runs sr WHERE sr.task_id=tasks.id AND sr.run_id=tasks.result#>>'{standalone_claim,run_id}'
+        AND sr.ended_at IS NOT NULL AND sr.status='failed' AND sr.context->>'source'='standalone-skill'
+        AND sr.result#>>'{standalone_start_review,request_sha256}'=$${push(standaloneStartFailure.requestSha)})`);
+  } else if(standalone!==undefined){
     if(foundation!==undefined||taskId==null||status!=='completed'
       ||!/^[a-f0-9-]{36}$/.test(standalone.runId??''))throw Error('standalone_terminal_proof_invalid');
     where.push(`payload->>'source' IN (${standaloneSourceList})

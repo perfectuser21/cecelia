@@ -1,13 +1,11 @@
-# 悦升 102、103 英文 Tasks 独立派单验收
+# 轻盈底座 101 原生准入前失败结算
 
-Task: 50988116-377f-4407-bdff-870aceb6ab6a
+Task: 095bcbd2-ef8c-40b7-96b4-02ca610fd0ed
 GP-Anchor: none(infra)
 
-- [ ] 只有英语 Tasks 的 101、显式分阶段批准的 102/103 和管理员来源租户匹配时，才路由到实际公司 UUID。拒绝错误来源、公司、阶段和 104 跨租户派单。
-  Test: manual:npm test --workspace packages/brain -- src/__tests__/notion-leadgen-dispatch.test.js
-- [ ] 只按目标租户恢复原 Notion 回执，错误父库不能恢复或建单。
-  Test: manual:npm test --workspace packages/brain -- src/__tests__/notion-push-sync-marked-ingest.test.js
-- [ ] 隔离 PostgreSQL 并发验证同源页只有一个任务，跨目标租户重放拒绝，未启动运行。
-  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
-- [ ] Brain 版本同步。
-  Test: manual:bash scripts/check-version-sync.sh
+- [x] 真实 HTTP 与隔离 PostgreSQL 中，经操作者认证且只收同一原 Task、TaskRun、attestation、宿主撤销和复核证据。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain --config vitest.integration.config.js standalone-start-reconciliation.pg.integration.test.js
+- [x] 阻断存活持有者、待审批计划、Span、保留的 Activity 动作、过期或漂移证据。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain --config vitest.integration.config.js standalone-start-reconciliation.pg.integration.test.js
+- [x] 原子写入失败任务和运行，旧回执原样、同证幂等、末次写失败整笔回滚，未自动重试。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain --config vitest.integration.config.js standalone-start-reconciliation.pg.integration.test.js
