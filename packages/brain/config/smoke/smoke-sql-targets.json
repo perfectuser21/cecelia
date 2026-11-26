@@ -5,16 +5,36 @@
     "evidence": "真实PGsuite preview-cache.pg.integration.test.js使用createIntakeTestDatabase：CREATE/DROP私有schema并写tasks与路由收据；wrapper默认/生产/远端/端口/有效配置用实际首callee受控边界验证，未执行数据库。",
     "source_commit": "ee00e9bff8c951a5e3c8eba7d9af9013b9b4ad94"
   },
-  "managed-script-capacity-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先，否则实际DB_HOST/DB_PORT/DB_NAME；URI缺port时实际PGPORT一致校验。","evidence":"实际NodePG两callee script-capacity-reservation/script-managed-executor.pg.integration.test.js用Client及Pool CREATE/TRUNCATE/DROP私有schema；受控真实wrapper默认及有效URI/DB边界回归不运行数据库。","source_commit":"1ef58332eda5fabf1218fc4db70e4905602811fd"},
+  "managed-script-capacity-smoke.sh": {
+    "kind": "write",
+    "connection": "TEST_DATABASE_URL最高优先，否则实际DB_HOST/DB_PORT/DB_NAME；URI缺port时实际PGPORT一致校验。",
+    "evidence": "实际NodePG两callee script-capacity-reservation/script-managed-executor.pg.integration.test.js用Client及Pool CREATE/TRUNCATE/DROP私有schema；受控真实wrapper默认及有效URI/DB边界回归不运行数据库。",
+    "source_commit": "1ef58332eda5fabf1218fc4db70e4905602811fd"
+  },
   "action-receipts-schema-smoke.sh": {
     "kind": "write",
     "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
     "evidence": "实际SQL/写调用源码行 34；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "alertness-schema-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL文件17/19/21行INSERT，psql -f执行CREATE SCHEMA/迁移；BEGIN/ROLLBACK事务保留。","source_commit":"d664db65c9"},
-  "b13-dbupsert-idempotent-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 21,26,38,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
-  "conversation-capture-multitool-smoke.sh": {"kind":"write","connection":"DATABASE_URL；未指定则拒绝，无凭据读取","evidence":"实际SQL/写调用源码行 98,102；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。","source_commit":"d664db65c9"},
+  "alertness-schema-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL文件17/19/21行INSERT，psql -f执行CREATE SCHEMA/迁移；BEGIN/ROLLBACK事务保留。",
+    "source_commit": "d664db65c9"
+  },
+  "b13-dbupsert-idempotent-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 21,26,38,56；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
+  "conversation-capture-multitool-smoke.sh": {
+    "kind": "write",
+    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
+    "evidence": "实际SQL/写调用源码行 98,102；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
+    "source_commit": "d664db65c9"
+  },
   "crontab-ledger-smoke.sh": {
     "kind": "write",
     "connection": "PGHOST/PGPORT/PGDATABASE；默认localhost/5432/cecelia_test；pg.Pool与psql共用PGDATABASE显式默认",
@@ -27,7 +47,12 @@
     "evidence": "实际SQL/写调用源码行 21,27；连接取值由connection记录，默认/冲突/安全目标经受控执行边界回归。",
     "source_commit": "d664db65c9"
   },
-  "harness-weighted-reservation-smoke.sh": {"kind":"write","connection":"TEST_DATABASE_URL最高优先；未指定时真实DB_HOST/DB_PORT/DB_NAME（DB_DEFAULTS）。URI省略port时有效PGPORT须与默认5432一致；显式host/port优先于PGHOST/PGPORT。","evidence":"实际Node PG callee attempt-weighted-reservation.pg.integration.test.js:35-49 Clientconnect/CREATE_SCHEMA/TABLE/migrations/ALTER；53TRUNCATE；57DROP_SCHEMA。默认及有效连接拒绝用真实wrapper+受控Vitest执行边界验证，未运行数据库。","source_commit":"df8cc371ccf200a4b0ca903a0e5ba8500dcae72f"},
+  "harness-weighted-reservation-smoke.sh": {
+    "kind": "write",
+    "connection": "TEST_DATABASE_URL最高优先；未指定时真实DB_HOST/DB_PORT/DB_NAME（DB_DEFAULTS）。URI省略port时有效PGPORT须与默认5432一致；显式host/port优先于PGHOST/PGPORT。",
+    "evidence": "实际Node PG callee attempt-weighted-reservation.pg.integration.test.js:35-49 Clientconnect/CREATE_SCHEMA/TABLE/migrations/ALTER；53TRUNCATE；57DROP_SCHEMA。默认及有效连接拒绝用真实wrapper+受控Vitest执行边界验证，未运行数据库。",
+    "source_commit": "df8cc371ccf200a4b0ca903a0e5ba8500dcae72f"
+  },
   "journeys-bizarea-smoke.sh": {
     "kind": "write",
     "connection": "DB_HOST/DB_PORT/DB_NAME（实际psql -h/-p/-d）；默认localhost/5432/cecelia拒绝",
@@ -216,10 +241,10 @@
   },
   "task-run-outlets-smoke.sh": {
     "kind": "readonly",
-    "connection": "DATABASE_URL；未指定则拒绝，无凭据读取",
-    "evidence": "INSERT仅grep迁移文件断言；实际psql仅SELECT notion_projection_map状态/方向。",
-    "sha256": "e3a7ba1398096a3df78ae5265c7d5e126a618bfd1fadc3505e92e103dbbecb2c",
-    "source_commit": "d664db65c9"
+    "connection": "TASK_RUN_SMOKE_DB_URL；未指定则不执行数据库读取，无凭据读取",
+    "evidence": "独立复核：INSERT仅grep迁移文件断言；实际psql仅SELECT notion_projection_map状态/方向。已清退日报与旧派发字符串，finishRun历史收尾和投影行为回归保留。",
+    "sha256": "aa99575003f8dfcfc45e70559f6d14c9deafdb0003e8c69c90bef773e9b9bca9",
+    "source_commit": "27781ec27a93bca5df4b9d36247df1d8b36d9c5d"
   },
   "workflow-run-lost-deadline-smoke.sh": {
     "kind": "write",
