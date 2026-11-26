@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { foundationHttpFixture } from '../fixtures/workflow-foundation-http.js';
 import { createFoundationTask } from '../../workflow-foundation/registry.js';
 import { digest } from '../../orchestrator/commander-decision.js';
@@ -90,6 +90,52 @@ it('原单被确认拦于原生准入前，原子失败结算、并发幂等且�
   expect((await f.claim()).body).toEqual({job:null});
   const newApprovedTask = await f.submit();
   expect((await f.claim()).body.job.task_id).toBe(newApprovedTask.id);
+},30000);
+
+it('仅接受与原 TaskRun 同一窗口的首次硬件诊断超时原件，结算仍不重试', async () => {
+  const f = await blocked101();
+  const startedAt = (await f.run()).started_at.toISOString();
+  const finishedAt = f.body.review.revocation.observed_at;
+  const digestValue = 'a'.repeat(64);
+  const hardware = {
+    protocol: 'device-epoch-fence-diagnostic/v1', query: 'hardware_serial',
+    scope: { endpoint: 'tcp:127.0.0.1:5045', serial: '127.0.0.1:15555', maintenance_task_id: f.task.id },
+    source: Object.fromEntries(['device-epoch-fence-diagnostics.mjs','adb-shell-v2-protocol.mjs','device-epoch-fence-reference.mjs'].map(key=>[key,digestValue])),
+    started_at: startedAt, finished_at: finishedAt,
+    events: [startedAt, finishedAt].flatMap((at,index)=>[
+      { index, event:'eof', at }, { index, event:'close', had_error:false, peer_eof:true, at },
+    ]),
+    files: Object.fromEntries(['socket-0.raw','socket-1.raw','stdout.raw','stderr.raw'].map(key=>[key,digestValue])),
+    wire_complete: false, exit_code: 0, error_code: 'DIAGNOSTIC_DEADLINE', pending: 0, open_sockets: 0,
+    original_execution_stopped: false, remote_quiescence: 'unknown', resource_authority: 'not_attested',
+  };
+  const input = (value, overrides = {}) => {
+    const raw = JSON.stringify(value)+'\n';
+    return {...f.body,review:{...f.body.review, admission_code:'EPOCH_DEVICE_IDENTITY',
+      hardware_diagnostic:{stage:'initial_hardware_serial',raw,sha256:createHash('sha256').update(raw).digest('hex'),...overrides}}};
+  };
+  for (const invalid of [
+    {...f.body,review:{...f.body.review,admission_code:'EPOCH_DEVICE_IDENTITY'}},
+    input(hardware,{sha256:'c'.repeat(64)}), input(hardware,{stage:'later_hardware_serial'}),
+    input({...hardware,scope:{...hardware.scope,maintenance_task_id:randomUUID()}}),
+    input({...hardware,started_at:'2020-01-01T00:00:00.000Z'}),
+    input({...hardware,finished_at:new Date(Date.parse(finishedAt)+1000).toISOString()}),
+    input({...hardware,query:'foreground'}), input({...hardware,exit_code:1}),
+    input({...hardware,wire_complete:true}), input({...hardware,error_code:'DIAGNOSTIC_UNKNOWN'}),
+    input({...hardware,open_sockets:1}), input({...hardware,pending:1}),
+    input({...hardware,events:hardware.events.slice(0,3)}),
+    input({...hardware,events:hardware.events.map(event=>event.event==='close'?{...event,peer_eof:false}:event)}),
+    {...input(hardware),review:{...input(hardware).review,admission_code:'EPOCH_ADMISSION_SCOPE'}},
+  ]) expect([400,409]).toContain((await f.reconcile(invalid)).status);
+  const attempt = input(hardware);
+  expect(await f.reconcile(attempt)).toMatchObject({status:200,body:{status:'failed',retry_safe:false,replayed:false}});
+  expect(await f.reconcile(attempt)).toMatchObject({status:200,body:{replayed:true}});
+  expect((await f.state()).result).toMatchObject({standalone_receipt:f.receipt, standalone_start_review:{
+    admission_code:'EPOCH_DEVICE_IDENTITY', hardware_diagnostic_sha256:attempt.review.hardware_diagnostic.sha256,
+    task_run_id:(await f.run()).id, retry_safe:false,
+  }});
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.claim()).body).toEqual({job:null});
 },30000);
 
 it('拒绝他机、过期、漂移、原生效果及存活 holder/计划；末段失败回滚原 TaskRun', async () => {
