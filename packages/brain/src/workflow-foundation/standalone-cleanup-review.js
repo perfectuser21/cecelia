@@ -21,48 +21,39 @@ function androidComponent(name) {
   return { package: pkg, activity: activity.startsWith('.') ? pkg + activity : activity };
 }
 
-function verifyTerminalAckLedger(ledger, leaves, target, preflight) {
+function readJsonl({raw,sha256}, maxBytes) {
+  invalid(typeof raw==='string' && Buffer.byteLength(raw)<=maxBytes && raw.endsWith('\n') && sha(raw)===sha256);
+  try { return raw.slice(0,-1).split('\n').map(line=>JSON.parse(line)); } catch { invalid(false); }
+}
+
+function verifyLeafLedger(ledger, leaves, commands, terminalAckMissing) {
   onlyKeys(ledger,['raw','sha256']);
-  const {raw,sha256}=ledger;
-  invalid(typeof raw==='string' && Buffer.byteLength(raw)<=12288 && raw.endsWith('\n') && sha(raw)===sha256);
-  const probes=preflight
-    ? [[...target,'shell','getprop','ro.product.model'],[...target,'shell','dumpsys','telephony.registry']]
-    : [[...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
-      [...target,'shell','input','keyevent','3']];
-  const commands=[['version'],['version'],[...target,'get-state'],['version'],probes[0],['version'],probes[1],['version']];
   invalid(leaves.length===commands.length && commands.every((argv,index)=>sha(JSON.stringify(argv))===leaves[index].argv_sha256));
-  let records;
-  try { records=raw.slice(0,-1).split('\n').map(line=>JSON.parse(line)); } catch { invalid(false); }
+  const records=readJsonl(ledger,terminalAckMissing?12288:24576);
   const expected=leaves.flatMap(leaf=>{
     const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
     const intent={sequence,argv_sha256,intent_at,boundary};
     return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
   });
   // Only the final local version probe lost its response handshake.
-  expected.push({...leaves.at(-1),phase:'unknown'});
+  if(terminalAckMissing)expected.push({...leaves.at(-1),phase:'unknown'});
   invalid(isDeepStrictEqual(records,expected));
-  return sha256;
+  return ledger.sha256;
 }
 
-function verifyPreflightTimeout(proof, review, host, physicalSerial) {
-  onlyKeys(proof,['raw','sha256','company_snapshot']);
-  const {raw,sha256,company_snapshot:snapshot}=proof;
-  invalid(typeof raw==='string' && Buffer.byteLength(raw)<=4096 && raw.endsWith('\n') && sha(raw)===sha256);
-  let records;
-  try { records=raw.slice(0,-1).split('\n').map(line=>JSON.parse(line)); } catch { invalid(false); }
-  invalid(records.length===3);
-  const [failed,...revoked]=records;
+function controllerFailure(failed, exitCode) {
   onlyKeys(failed,['operation','code','controller_exit_code','at','diagnostic']);
   onlyKeys(failed.diagnostic,['stdout','stderr']);
   const {stdout,stderr}=failed.diagnostic;
-  invalid(failed.operation==='phone' && failed.code==='STANDALONE_NATIVE_COMMAND' && failed.controller_exit_code===124
-    && typeof stdout==='string' && stdout.split(/\r?\n/).includes('serial='+physicalSerial)
-    && stdout.split(/\r?\n/).includes('call_state=idle')
-    && typeof stderr==='string' && stderr.split(/\r?\n/).includes('NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN')
-    && stderr.split(/\r?\n/).includes('guarded command timeout: whole command and children terminated; owner lock retained'));
-  for (const [index,row] of revoked.entries()) {
+  invalid(failed.operation==='phone' && failed.code==='STANDALONE_NATIVE_COMMAND' && failed.controller_exit_code===exitCode
+    && typeof stdout==='string' && typeof stderr==='string');
+  return {stdout,stderr};
+}
+
+function verifyControllerRevocation(records, expectedOperations, review) {
+  for (const [index,row] of records.slice(1).entries()) {
     onlyKeys(row,['operation','code','at']);
-    invalid(row.operation===['phone','inspect'][index] && row.code==='STANDALONE_NATIVE_HOST_REVOKED');
+    invalid(row.operation===expectedOperations[index] && row.code==='STANDALONE_NATIVE_HOST_REVOKED');
   }
   let previous=Date.parse(review.revocation.observed_at);
   for (const row of records) {
@@ -70,21 +61,50 @@ function verifyPreflightTimeout(proof, review, host, physicalSerial) {
     invalid(validTime(row.at) && at>=previous && at<=Date.parse(review.observed_at));
     previous=at;
   }
+}
+
+function verifyCompanySnapshot(snapshot, host) {
   onlyKeys(snapshot,['company_id','tenant_id','version','line_key','run_id','count']);
   invalid(uuid.test(snapshot.company_id??'') && uuid.test(snapshot.tenant_id??'') && Number.isSafeInteger(snapshot.version)
     && snapshot.version>0 && typeof snapshot.line_key==='string' && /^[a-z0-9_-]{1,100}$/.test(snapshot.line_key)
     && snapshot.run_id===host.run_id && snapshot.count===1);
-  return {sha256,snapshot};
+  return snapshot;
+}
+
+function verifyPreflightTimeout(proof, review, host, physicalSerial) {
+  onlyKeys(proof,['raw','sha256','company_snapshot']);
+  const records=readJsonl(proof,4096);
+  invalid(records.length===3);
+  const {stdout,stderr}=controllerFailure(records[0],124);
+  invalid(stdout.split(/\r?\n/).includes('serial='+physicalSerial) && stdout.split(/\r?\n/).includes('call_state=idle')
+    && stderr.split(/\r?\n/).includes('NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN')
+    && stderr.split(/\r?\n/).includes('guarded command timeout: whole command and children terminated; owner lock retained'));
+  verifyControllerRevocation(records,['phone','inspect'],review);
+  return {sha256:proof.sha256,snapshot:verifyCompanySnapshot(proof.company_snapshot,host)};
+}
+
+function verifyAccountForegroundRefusal(proof, review, host) {
+  onlyKeys(proof,['raw','sha256','company_snapshot','leaf_ledger']);
+  const records=readJsonl(proof,4096);
+  invalid(records.length===2);
+  const {stdout,stderr}=controllerFailure(records[0],2);
+  invalid(stdout==='' && stderr==='standalone account entry is not in Douyin foreground; navigation refused\n');
+  verifyControllerRevocation(records,['inspect'],review);
+  return {sha256:proof.sha256,snapshot:verifyCompanySnapshot(proof.company_snapshot,host)};
 }
 
 export function verifyDesktopCleanupProof(review, host) {
   const artifact = review.cleanup_diagnostic;
-  const preflight=review.admission_code===preflightTimeout;
-  invalid((preflight || review.admission_code === desktopUnknown) && review.hardware_diagnostic === undefined);
-  onlyKeys(artifact,['raw','sha256','adb_endpoint','adb_serial','central_lease_version','desktop_readback','terminal_ack_ledger','preflight_timeout']);
+  onlyKeys(artifact,['raw','sha256','adb_endpoint','adb_serial','central_lease_version','desktop_readback',
+    'terminal_ack_ledger','preflight_timeout','account_foreground_refusal']);
   const { raw, sha256, adb_endpoint: endpoint, adb_serial: serial, central_lease_version: version, desktop_readback: desktop,
-    terminal_ack_ledger:ledger,preflight_timeout:controller } = artifact;
-  invalid(preflight ? ledger!==undefined && controller!==undefined : controller===undefined);
+    terminal_ack_ledger:ledger,preflight_timeout:controller,account_foreground_refusal:account } = artifact;
+  const accountRefused=account!==undefined;
+  const preflight=review.admission_code===preflightTimeout && !accountRefused;
+  invalid((review.admission_code===preflightTimeout || !accountRefused && review.admission_code===desktopUnknown)
+    && review.hardware_diagnostic===undefined);
+  invalid(preflight ? ledger!==undefined && controller!==undefined
+    : controller===undefined && (!accountRefused || ledger===undefined));
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
   invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= 8192 && sha(raw) === sha256
@@ -115,7 +135,7 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(host.run_directory + '/standalone-leaves/')
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.split('/').at(-1))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= 10);
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (accountRefused ? 16 : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
@@ -124,7 +144,7 @@ export function verifyDesktopCleanupProof(review, host) {
   for (const [index,leaf] of seal.leaves.entries()) {
     onlyKeys(leaf,['sequence','argv_sha256','intent_at','boundary','pid','started_at','ended_at','code','signal',
       'tainted','dump_crash_returned','request_returned']);
-    invalid(leaf.sequence === index + 1 && (!allReturned || readOnly.has(leaf.argv_sha256))
+    invalid(leaf.sequence === index + 1 && (!allReturned || accountRefused || readOnly.has(leaf.argv_sha256))
       && leaf.boundary === 'darwin-sandbox-deny-process-fork-v1' && Number.isSafeInteger(leaf.pid) && leaf.pid > 0
       && [leaf.intent_at,leaf.started_at,leaf.ended_at].every(Number.isSafeInteger)
       && leaf.intent_at >= previousEnd && leaf.started_at >= leaf.intent_at && leaf.ended_at >= leaf.started_at
@@ -132,7 +152,21 @@ export function verifyDesktopCleanupProof(review, host) {
       && leaf.tainted === false && leaf.dump_crash_returned === false && leaf.request_returned === true);
     previousEnd = leaf.ended_at;
   }
-  const ledgerSha256=allReturned ? undefined : verifyTerminalAckLedger(ledger,seal.leaves,target,preflight);
+  const versionProbe=['version'];
+  const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
+  const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
+  const startup=[versionProbe,versionProbe,[...target,'get-state'],versionProbe];
+  let ledgerSha256,accountProof;
+  if(accountRefused){
+    accountProof=verifyAccountForegroundRefusal(account,review,host);
+    const commands=[...startup,model,versionProbe,call,versionProbe,foregroundProbe,...startup,model,versionProbe,foregroundProbe];
+    ledgerSha256=verifyLeafLedger(account.leaf_ledger,seal.leaves,commands,false);
+  }else if(!allReturned){
+    const home=[...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'];
+    const key=[...target,'shell','input','keyevent','3'];
+    const commands=[...startup,preflight?model:home,versionProbe,preflight?call:key,versionProbe];
+    ledgerSha256=verifyLeafLedger(ledger,seal.leaves,commands,true);
+  }
   const preflightProof=preflight ? verifyPreflightTimeout(controller,review,host,desktop.serial) : undefined;
-  return { sha256, ledgerSha256, preflightProof, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
+  return { sha256, ledgerSha256, preflightProof, accountProof, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
 }
