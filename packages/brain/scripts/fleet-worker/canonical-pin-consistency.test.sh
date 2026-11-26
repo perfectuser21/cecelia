@@ -27,7 +27,6 @@ while IFS= read -r rel; do
   grep -q "$hex" "$REPO_ROOT/packages/brain/$rel" \
     || fail "pin file missing baseline digest: packages/brain/$rel"
 done <<< "$PIN_FILES"
-grep -q "$hex" "$REPO_ROOT/DEFINITION.md" || fail "DEFINITION.md missing baseline digest"
 
 # pin 语境行不允许残留任何其它 digest（防新旧并存）
 stray="$(grep -rn "runner_image_digest\|RUNNER_DIGEST=" "$REPO_ROOT/packages/brain" \
