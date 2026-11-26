@@ -155,7 +155,9 @@ jobs:
       - name: Verify bounded checker repair and host recovery
         env:
           TEST_DB_URL: postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch
-        run: node packages/brain/scripts/smoke/commander-repair-smoke.mjs
+        run: |
+          node --test packages/brain/scripts/smoke/__tests__/commander-repair-replay.node-test.mjs
+          node packages/brain/scripts/smoke/commander-repair-smoke.mjs
         if: '!cancelled()'
       - name: Verify Workflow registration to Brain and real DBOS execution
         working-directory: packages/brain

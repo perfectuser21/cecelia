@@ -215,7 +215,7 @@ jobs:
           # 等 /api/brain/tick/status 200（最多 90s）
           for _attempt in $(seq 1 90); do
             if curl -sf http://localhost:5221/api/brain/tick/status >/dev/null 2>&1; then
-              echo "✅ Brain healthy in ${i}s"
+              echo "✅ Brain healthy in ${_attempt}s"
               exit 0
             fi
             sleep 1

@@ -139,7 +139,7 @@ const requiredRuntimeChecks=[
   },
   {
     "name": "Verify bounded checker repair and host recovery",
-    "run": "node packages/brain/scripts/smoke/commander-repair-smoke.mjs",
+    "run": "node --test packages/brain/scripts/smoke/__tests__/commander-repair-replay.node-test.mjs\nnode packages/brain/scripts/smoke/commander-repair-smoke.mjs\n",
     "env": {
       "TEST_DB_URL": "postgresql://onboarding_ci:onboarding_ci@127.0.0.1:5432/cecelia_scratch"
     },
@@ -310,6 +310,7 @@ test('真实YAML事件表达式隔离closed/weekly，普通PR push manual严格�
 for(const mutate of [
   job=>{job.steps.find(step=>step.name==='Verify Commander decisions and activity recovery').run='echo PASS';},
   job=>{job.steps=job.steps.filter(step=>step.name!=='Verify bounded checker repair and host recovery');},
+  job=>{job.steps.find(step=>step.name==='Verify bounded checker repair and host recovery').run='node packages/brain/scripts/smoke/commander-repair-smoke.mjs';},
   job=>{job.steps.find(step=>step.name==='接入结算与隔离回归（含真实数据库）').if='false';},
   job=>{job.steps.find(step=>step.name==='Verify Workflow registration to Brain and real DBOS execution').env.DB_NAME='cecelia';},
 ])test('现役集成合同拒绝空跑、删步骤、禁用和生产库',()=>{
