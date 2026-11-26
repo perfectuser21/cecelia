@@ -23,7 +23,6 @@ export default {
     include: [...POSTGRES_INTEGRATION_TESTS,
       'src/orchestrator/__tests__/contract-store.test.js',
       'src/__tests__/migration-370-gp-governance-decisions.test.js',
-      'src/__tests__/nightly-orchestrator.integration.test.js',
       'src/**/integration/**/*.{test,spec}.?(c|m)[jt]s?(x)'],
     exclude: ['**/node_modules/**', ...aggregatedPgContracts, ...manualPreviewFiles, ...INACTIVE_CONSCIOUSNESS_TESTS, ...privatePgTests.map(brainRelativePgPath)],
   },

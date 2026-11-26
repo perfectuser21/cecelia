@@ -4,7 +4,6 @@ import pool from '../db.js';
 import { getDailyFocus, setDailyFocus, clearDailyFocus, getFocusSummary } from '../focus.js';
 import { getTickStatus } from '../tick.js';
 import { getActivePolicy, getWorkingMemory, getTopTasks, getRecentDecisions, IDEMPOTENCY_TTL, ALLOWED_ACTIONS } from './shared.js';
-import { getNightlyOrchestratorStatus } from '../nightly-orchestrator.js';
 import websocketService, { WS_EVENTS } from '../websocket.js';
 import { EXPECTED_SCHEMA_VERSION } from '../selfcheck.js';
 import { parseTaskListQuery } from '../lib/task-list-query.js';
@@ -226,7 +225,16 @@ router.get('/status/full', async (req, res) => {
         last_tick_at: tickStatus.last_tick || null,
         interval_minutes: tickStatus.interval_minutes || 5
       },
-      nightly_orchestrator: getNightlyOrchestratorStatus(),
+      nightly_orchestrator: {
+        scheduler_running: false,
+        in_night_window: false,
+        night_window_utc: '20:00-8:00',
+        cycle_count: 0,
+        dispatched_tonight: 0,
+        last_cycle_at: null,
+        last_report_date: null,
+        retired: true,
+      },
       token_stats: {
         today_usd: 0
       }

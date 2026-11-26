@@ -816,15 +816,6 @@ async function onBrainListening() {
     console.log('[Server] Evolution Scanner SKIPPED (CONSCIOUSNESS_ENABLED=false)');
   }
 
-  // Initialize Nightly Orchestrator (夜间自驱引擎 v1 — 任务自动编排)
-  try {
-    const { startNightlyOrchestratorScheduler } = await import('./src/nightly-orchestrator.js');
-    startNightlyOrchestratorScheduler();
-    console.log('[Server] Nightly Orchestrator started (20:00-08:00 UTC, 30min interval)');
-  } catch (e) {
-    console.warn('[Server] Nightly Orchestrator init failed (non-fatal):', e.message);
-  }
-
   // Layer 2 蒸馏文档初始化（SOUL seed + WORLD_STATE/SELF_MODEL/USER_PROFILE 定时更新）
   try {
     const { seedSoul, refreshWorldState, refreshSelfModel, refreshUserProfile } = await import('./src/distilled-docs.js');
