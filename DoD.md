@@ -1,13 +1,13 @@
-# US Linux 根卷容量观测验收
+# CI 工具准备、分片均衡及旧检查清退验收
 
-Task: 6a0fde14-8871-4bb0-8ce1-db449ce71d68
+Task: 98ffde55-541b-458b-985f-11f5213c742d
 GP-Anchor: none(infra)
 
-- [ ] Linux 根卷采样以生产部署同路径绑定和预期设备为准，缺失或错盘报失败。80% 触发 P2，90% 触发 P1。
-  Test: manual:npm test --workspace packages/brain -- src/cron/linux-root-disk.test.js
-- [ ] Staging、预览和 canary 不采样。Mac SSH 磁盘守卫与手动接口行为保留。
-  Test: manual:npm test --workspace packages/brain -- src/cron/linux-root-disk.test.js src/cron/disk-guard.test.js src/routes/cron.test.js
-- [ ] 目录投影的运行账保留完整去重、回执及统计，避免宽行中间结果写入临时文件。
-  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
+- [ ] 主机工具按组件实际依赖准备，未知组件及安装失败拒绝通过；六个 Brain 分片与所有原专项检查均保留执行入口。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts
+- [ ] 三份回调业务测试消除重复实等，保留原业务断言；真实冷却时长及等待次序仍由已收集专项回归约束。
+  Test: manual:npm test --workspace packages/brain -- src/__tests__/callback-needs-fix-rounds.test.js src/__tests__/suggestion-callback-contract.test.js src/__tests__/callback-coding-pathway-cleanup.test.js src/__tests__/callback-cooldown.test.js src/__tests__/callback-resilience.test.js
+- [ ] 旧自动改版本 bot 及其专属测试清退，完整 manifest、冻结来源和历史基线兼容仍有真实回归。
+  Test: manual:npm test --workspace packages/brain -- scripts/ci/__tests__/implementation-auxiliary-evidence.test.mjs scripts/ci/__tests__/implementation-auxiliary-read-reuse.test.mjs scripts/ci/__tests__/cleanup-source-retirement.test.mjs
 - [ ] Brain 版本同步。
   Test: manual:bash scripts/check-version-sync.sh

@@ -29,7 +29,8 @@ export function commandsFor(component, shard) {
     case 'brain-unit':
       if (!/^[1-6]$/.test(String(shard))) throw new Error('Brain 分片必须为 1–6');
       return [
-        ...(String(shard) === '3' ? [step('packages/brain', 'npm', 'run', 'lint'), ...shellTests('packages/brain/scripts/fleet-worker'), smokeSafetyTests()] : []),
+        ...(String(shard) === '1' ? shellTests('packages/brain/scripts/fleet-worker') : []),
+        ...(String(shard) === '6' ? [smokeSafetyTests()] : []),
         step('packages/brain', 'npx', '--no-install', 'vitest', 'run', `--shard=${shard}/6`, '--reporter=dot', '--silent'),
       ];
     case 'brain-integration':
@@ -82,6 +83,7 @@ export function commandsFor(component, shard) {
         }).sort().map(name => `scripts/ci/__tests__/${name}`);
       if (!tests.length) throw new Error('Node测试集合为空');
       return [
+        step('packages/brain', 'npm', 'run', 'lint'),
         step('.', 'node', '--test', ...tests),
         step('.', 'node', 'scripts/dev/check.mjs'),
         step('.', 'node', 'scripts/facts-check.mjs'),

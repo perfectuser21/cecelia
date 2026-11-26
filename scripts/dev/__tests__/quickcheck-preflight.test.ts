@@ -93,13 +93,21 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
   it.each(['scripts/ci/change.mjs', '.github/workflows/change.yml', 'package-lock.json', 'package.json'])('共享入口 %s 实际执行 scripts CI runner', path => {
     const result = fixture([path]);
     expect(result.status, result.stdout + result.stderr).toBe(0);
-    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools', 'scripts:ownership-unit', 'scripts:ownership-scan']);
+    expect(result.markers).toEqual(['packages/brain:lint', 'scripts:node-test', 'scripts:dev-tools', 'scripts:ownership-unit', 'scripts:ownership-scan']);
+  });
+  it('共享入口的真实lint失败会阻止后续scripts检查和push', () => {
+    const result = fixture(['scripts/ci/change.mjs'], { failure: 23 });
+    expect(result.status).toBe(1);
+    expect(result.markers).toEqual(['packages/brain:lint']);
+    expect(result.stdout).toContain('exit=23');
+    expect(result.stdout).toContain('push 被阻止');
+    expect(result.stdout).not.toContain('本地准备检查通过');
   });
   it.each(['unit', 'scanner'] as const)('所有权%s失败必须传播并阻止push', stage => {
     const result = fixture(['scripts/ci/change.mjs'], stage === 'unit'
       ? { ownershipUnitFailure: true } : { ownershipScannerFailure: true });
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
-    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools',
+    expect(result.markers).toEqual(['packages/brain:lint', 'scripts:node-test', 'scripts:dev-tools',
       'scripts:ownership-unit', ...(stage === 'scanner' ? ['scripts:ownership-scan'] : [])]);
     expect(result.stdout).not.toContain('本地准备检查通过');
   });
@@ -107,7 +115,7 @@ describe('quickcheck 快速准备检查，完整单测由GitHub必需检查负�
     const result = fixture(['scripts/ci/change.mjs'], { emptyOwnershipSuite: true });
     expect(result.status, result.stdout + result.stderr).not.toBe(0);
     expect(result.stderr).toContain('NO TESTS RAN: owned quickcheck fixture');
-    expect(result.markers).toEqual(['scripts:node-test', 'scripts:dev-tools']);
+    expect(result.markers).toEqual(['packages/brain:lint', 'scripts:node-test', 'scripts:dev-tools']);
     expect(result.stdout).not.toContain('本地准备检查通过');
   });
   it.each([{ missingScript: true }, { missingTool: true }, { failure: 17 }])('缺入口/工具或真实命令非零时阻止push：%j', options => {
