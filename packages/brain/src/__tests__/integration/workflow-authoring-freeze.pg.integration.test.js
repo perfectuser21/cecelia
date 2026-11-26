@@ -131,7 +131,7 @@ it('快照保存失败，workflow/活动/步骤/回执全部回滚',async()=>{
   expect((await db.query('SELECT result FROM tasks WHERE id=$1',[taskId])).rows[0].result.workflow_authoring.stage).toBe('register');
 });
 
-it.each([false,true])('真实Git扫描→正式地图→authoring回归→release门禁，跨版本复用=%s',async reuseOld=>{
+async function verifyAuthoringRelease(reuseOld){
   const directory=mkdtempSync(join(tmpdir(),'authoring-release-')),repoRoot=join(directory,'repo');mkdirSync(repoRoot);
   const git=(...args)=>execFileSync('git',args,{cwd:repoRoot,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const write=(path,content)=>{mkdirSync(dirname(join(repoRoot,path)),{recursive:true});writeFileSync(join(repoRoot,path),content);};
@@ -158,7 +158,10 @@ it.each([false,true])('真实Git扫描→正式地图→authoring回归→releas
     const registration={scope_key:'commander-generic',repo:'commander-generic-workspace',adapter_key:'legacy-ledger-v1',adapter_config:config};
     await registerImplementationRepository(db,registration);
     expect((await registerImplementationRepository(db,registration)).created).toBe(false);
+    if(reuseOld)git('-c','user.name=fixture','-c','user.email=fixture@example.invalid','commit','--allow-empty','-m','test: 独立的地图扫描版本');
+    const scanRevision=git('rev-parse','HEAD');
     expect((await scanRepo({name:'commander-generic-workspace',root:repoRoot},db)).error).toBeUndefined();
+    if(reuseOld)git('checkout','--detach',source.revision);
     const parent=(await db.query('SELECT parent_journey_id id FROM capabilities WHERE id=$1',[definition.capability_id])).rows[0].id;
     await db.query("INSERT INTO value_streams(id,name) VALUES($1,'运行管理')",[parent]);
     const decision=randomUUID();await db.query("INSERT INTO decisions(id,category,topic,decision,status) VALUES($1,'feature','map','测试范围登记','active')",[decision]);
@@ -208,5 +211,36 @@ it.each([false,true])('真实Git扫描→正式地图→authoring回归→releas
     expect(release.release.payload.verification.status).toBe('verified');
     const missing=await exportImplementationSnapshot(db,{...query,revision:'b'.repeat(40)});
     expect(missing.status).toBe('unknown');expect(missing.gaps).toContainEqual(expect.objectContaining({code:'authoring_definition_missing'}));
+    if(reuseOld){
+      const originalMap=snapshot.map.manifest;
+      expect(scanRevision).not.toBe(source.revision);
+      const projection=(await db.query('SELECT * FROM map_projection_runs WHERE manifest_version_id=$1 AND status=$2',[originalMap.id,'active'])).rows[0];
+      expect(projection.fact_revisions[registration.repo]).toBe(scanRevision);
+      const laterMap=structuredClone(originalMap.manifest);
+      laterMap.value_streams[0].brain_binding.source_revision=scanRevision;
+      const later=await submitMapManifest(db,laterMap);
+      await activateMapManifest(db,later.manifest_version.id);
+      await db.query('UPDATE workflows SET current_definition_version_id=NULL WHERE id=$1',[w.workflow_id]);
+
+      const historical=await exportImplementationSnapshot(db,query);
+      expect(historical.status,JSON.stringify(historical.gaps)).toBe('verified');
+      expect(historical.map).toMatchObject({source_basis:'historical_projection',manifest:{id:originalMap.id,digest:originalMap.digest}});
+      expect(historical.definitions.workflows.map(row=>row.id)).toEqual([w.id]);
+
+      await db.query(`INSERT INTO map_projection_runs(scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,projection_digest,status,activated_at)
+        SELECT scope_key,manifest_version_id,manifest_digest,fact_revisions,projector_version,$2,'superseded',activated_at FROM map_projection_runs WHERE id=$1`,[projection.id,'f'.repeat(64)]);
+      const ambiguous=await exportImplementationSnapshot(db,query);
+      expect(ambiguous.status).toBe('unknown');
+      expect(ambiguous.gaps).toContainEqual({code:'manifest_snapshot_ambiguous',revision:source.revision});
+      expect(ambiguous.map.manifest).toBeNull();
+
+      await db.query('DELETE FROM map_projection_runs WHERE manifest_version_id=$1',[originalMap.id]);
+      const mixedSource=await exportImplementationSnapshot(db,query);
+      expect(mixedSource.status).toBe('unknown');
+      expect(mixedSource.gaps).toContainEqual({code:'scope_manifest_missing',scope:query.scope,revision:source.revision});
+      expect(mixedSource.map.manifest).toBeNull();
+    }
   }finally{rmSync(directory,{recursive:true,force:true});}
-});
+}
+it('真实 Git 扫描、正式地图和同 SHA authoring 发布门禁',()=>verifyAuthoringRelease(false));
+it('跨版本 authoring 发布及历史地图按固定源读回，拒绝冲突投影和混合来源',()=>verifyAuthoringRelease(true));
