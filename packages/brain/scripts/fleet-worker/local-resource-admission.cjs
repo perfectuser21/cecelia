@@ -6,6 +6,7 @@ const { randomUUID } = require('node:crypto');
 const { lstat, stat } = require('node:fs/promises');
 const path = require('node:path');
 const { promisify } = require('node:util');
+const { fleetNodeProfilePath } = require('./runtime-config.cjs');
 const runFile = promisify(execFile);
 const GIB = 1024 ** 3;
 
@@ -79,7 +80,7 @@ function createLocalResourceAdmission({
   platform = process.platform,
   runCommand = runFile,
   now = Date.now,
-  loadProfile = () => JSON.parse(readFileSync(path.join(__dirname, 'fleet-node-profiles.json'), 'utf8'))
+  loadProfile = () => JSON.parse(readFileSync(fleetNodeProfilePath(), 'utf8'))
     .profiles.find((profile) => profile.machine_id === workerId),
 } = {}) {
   return async function assertLocalResources() {

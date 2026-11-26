@@ -1,4 +1,7 @@
 'use strict';
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { createLocalResourceAdmission } = require('./local-resource-admission.cjs');
 const registry = require('../../config/fleet-node-profiles.json');
 const profile = registry.profiles.find((entry) => entry.machine_id === 'us-mac-m4');
@@ -23,6 +26,47 @@ function fixture(overrides = {}) {
   }) };
 }
 describe('本机即时资源准入', () => {
+  it('源码检出时默认读取仓库登记，正常资源样本获准', async () => {
+    const { runCommand } = fixture();
+    const guard = createLocalResourceAdmission({ workerId: 'us-mac-m4', diskPaths: ['/controlled'],
+      platform: 'darwin', runCommand });
+    await expect(guard()).resolves.toBeUndefined();
+    expect(runCommand).toHaveBeenCalledTimes(6);
+  });
+  it('安装目录优先，读取损坏、悬空链接或两处缺失时不放行', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fleet-resource-profile-'));
+    try {
+      const worker = path.join(root, 'brain/scripts/fleet-worker');
+      const config = path.join(root, 'brain/config');
+      fs.mkdirSync(worker, { recursive: true });
+      fs.mkdirSync(config);
+      for (const file of ['local-resource-admission.cjs', 'runtime-config.cjs']) {
+        fs.copyFileSync(path.join(__dirname, file), path.join(worker, file));
+      }
+      const adjacent = path.join(worker, 'fleet-node-profiles.json');
+      const source = path.join(config, 'fleet-node-profiles.json');
+      fs.copyFileSync(require.resolve('../../config/fleet-node-profiles.json'), source);
+      const { runCommand } = fixture();
+      const guard = require(path.join(worker, 'local-resource-admission.cjs')).createLocalResourceAdmission({
+        workerId: profile.machine_id, diskPaths: ['/controlled'], platform: 'darwin', runCommand,
+      });
+      fs.copyFileSync(source, adjacent);
+      fs.writeFileSync(source, '{');
+      await expect(guard()).resolves.toBeUndefined();
+      expect(runCommand).toHaveBeenCalledTimes(6);
+      fs.copyFileSync(adjacent, source);
+      runCommand.mockClear();
+      fs.writeFileSync(adjacent, '{');
+      await expect(guard()).rejects.toMatchObject({ statusCode: 429 });
+      fs.unlinkSync(adjacent);
+      fs.symlinkSync(path.join(root, 'nonexistent.json'), adjacent);
+      await expect(guard()).rejects.toMatchObject({ statusCode: 429 });
+      fs.unlinkSync(adjacent);
+      fs.unlinkSync(source);
+      await expect(guard()).rejects.toMatchObject({ statusCode: 429 });
+      expect(runCommand).not.toHaveBeenCalled();
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
   it('使用整机策略且只运行只读轻量命令，不缓存旧采样', async () => {
     const { guard, runCommand } = fixture();
     await guard(); await guard();
