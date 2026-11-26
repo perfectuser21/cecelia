@@ -347,33 +347,29 @@ test('共享候选Docker按df命令token识别磁盘检查，SHA内df不得吞�
   assert.equal(disk.status,0,disk.stderr);assert.match(disk.stdout,/^Filesystem /);
 });
 
- test('完整快照通过私有regular归档jobs2恢复并记录绑定阶段计时', t => {
-  const f=fixture(t), result=runStage(f); assert.equal(result.status,0,result.stderr+result.stdout+JSON.stringify(f.receipt())+JSON.stringify(f.commands().slice(-15)));
-  const restore=f.commands().find(a=>a.includes('pg_restore'));
-  assert.ok(restore.includes('--jobs=2')); assert.ok(!restore.includes('-i'));
-  assert.match(restore.at(-1), /^\/var\/lib\/postgresql\/data\/cecelia-snapshot-/);
-  assert.equal(f.receipt().timings.request_id,request);assert.equal(f.receipt().timings.sha,f.sha);
-  for(const phase of ['export_transfer','restore','migration','health_readback','cleanup']) assert.ok(f.receipt().timings.stages[phase].duration_ms>=0);
- });
- for(const fault of ['dump-partial','dump-empty','receiver-disconnect','archive-permissions','receiver-write','receiver-limit','receiver-exact-limit','receiver-rename','receiver-wc','archive-symlink','archive-cleanup','capacity-invalid','capacity-reserve','capacity-after']) test(`快照故障闭锁迁移：${fault}`, t=>{
-  const f=fixture(t,fault),result=runStage(f);assert.notEqual(result.status,0,result.stdout+result.stderr);
-  assert.equal(f.receipt().status,'failed');assert.equal(f.state('mac-studio').migrated,undefined);
-  assert.equal(existsSync(join(f.dir,'state/snapshot-volume')),false,'失败必须沿原请求rm-v回收敏感卷');
- });
 
-test('完整快照容量预算拒绝非法、溢出、零上限与恰好保留余量', t=>{
- const f=fixture(t);
- const script='source scripts/lib/brain-snapshot.sh; stage_snapshot_budget';
- for(const [e,k] of [['-1','9000000'],['1.5','9000000'],['01','9000000'],['9007199254740992','9000000'],['1','9007199254740992'],['0','5242880'],['508','5242880'],['1','0']]){
-  assert.notEqual(f.run(`${script} '${e}' '${k}'`).status,0);
- }
- const valid=f.run(`${script} 508 5242881`);assert.equal(valid.status,0,valid.stderr);assert.equal(valid.stdout,'5368710136 8');
+test('完整快照通过固定容器流式恢复并记录重叠阶段计时', t => {
+ const f=fixture(t),result=runStage(f);assert.equal(result.status,0,result.stderr+result.stdout);
+ const restore=f.commands().find(a=>a.includes('pg_restore'));
+ assert.ok(restore.includes('-i'));assert.ok(restore.includes('e'.repeat(64)));
+ assert.ok(!restore.some(a=>a.startsWith('--jobs')));assert.ok(!restore.some(a=>a.includes('/archive')));
+ assert.equal(f.receipt().timings.request_id,request);assert.equal(f.receipt().timings.sha,f.sha);
+ assert.deepEqual(Object.keys(f.receipt().timings.stages).sort(),['cleanup','export_transfer_restore','health_readback','migration']);
+ for(const phase of ['export_transfer_restore','migration','health_readback','cleanup'])assert.ok(f.receipt().timings.stages[phase].duration_ms>=0);
 });
-
-test('spool后请求身份替换必须拒绝恢复且保留不属于本请求的容器',t=>{
- const f=fixture(t,'owner-after-spool'),result=runStage(f);assert.notEqual(result.status,0,result.stdout+result.stderr);
+for(const fault of ['dump-partial','dump-empty','restore-disconnect','capacity-invalid','capacity-reserve'])test(`完整流式快照故障闭锁迁移：${fault}`, t=>{
+ const f=fixture(t,fault),result=runStage(f);assert.notEqual(result.status,0,result.stdout+result.stderr);
  assert.equal(f.receipt().status,'failed');assert.equal(f.state('mac-studio').migrated,undefined);
- assert.equal(f.commands().some(a=>a.includes('pg_restore')),false);
+ assert.deepEqual(f.state('mac-studio').containers,{});
+});
+test('全库容量预算拒绝非法、溢出及恰好保留余量',t=>{
+ const f=fixture(t),script='source scripts/lib/brain-snapshot.sh; stage_snapshot_budget';
+ for(const [e,k] of [['-1','9000000'],['1.5','9000000'],['01','9000000'],['9007199254740992','9000000'],['1','9007199254740992'],['0','5242880'],['508','5242880'],['1','0']])assert.notEqual(f.run(`${script} '${e}' '${k}'`).status,0);
+ const valid=f.run(`${script} 508 5242881`);assert.equal(valid.status,0,valid.stderr);assert.equal(valid.stdout,'5368710136');
+});
+test('恢复后请求身份替换必须闭锁迁移并保留不属于本请求的容器',t=>{
+ const f=fixture(t,'owner-after-restore'),result=runStage(f);assert.notEqual(result.status,0,result.stdout+result.stderr);
+ assert.equal(f.receipt().status,'failed');assert.equal(f.state('mac-studio').migrated,undefined);
  assert.equal(f.commands().some(a=>a.includes('stop')&&a.includes('cecelia-admission-db')),false);
  assert.ok(f.state('mac-studio').containers['cecelia-admission-db']);
 });

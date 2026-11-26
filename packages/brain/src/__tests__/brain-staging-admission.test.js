@@ -48,7 +48,7 @@ case "$1" in
   if [[ "$*" != *--format* ]]; then [[ -f "$STATE/$2" ]]; exit; fi
   if [[ "$*" == *'{{.Id}}'* ]]; then printf '%064d\n' 1; exit; fi
   if [[ "$*" == *State.Health* ]]; then echo healthy; elif [[ "$*" == *'{{.Image}}'* || "$*" == *'{{.Id}}'* ]]; then if [[ "$MODE" == wrong-digest ]]; then echo "sha256:wrong"; else echo "$DIGEST"; fi; else exit 1; fi; exit 0;;
- rm) for arg in "$@"; do case "$arg" in cecelia-admission-*) rm -f "$STATE/$arg"; [[ "$arg" != cecelia-admission-db ]] || rm -rf "$STATE.snapshots";; esac; done; exit 0;;
+ rm) for arg in "$@"; do case "$arg" in cecelia-admission-*) rm -f "$STATE/$arg";; esac; done; exit 0;;
  stop|tag) exit 0;;
  run)
   name=""; previous=""; owner=""
@@ -67,18 +67,9 @@ case "$1" in
   if [[ "$*" == *pg_database_size* ]]; then echo 100000000; exit 0; fi
   if [[ "$*" == *'df -Pk'* ]]; then if [[ "$MODE" == disk-full ]]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 1000 950 50 95%% /\n'; exit; fi; printf "Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 30000000 5000000 25000000 10%% /\n"; exit 0; fi
   if [[ "$*" == *pg_dump* ]]; then echo dump; exit 0; fi
-  if [[ " $* " == *' snapshot-create '* || " $* " == *' snapshot-receive '* || " $* " == *' snapshot-commit '* || " $* " == *' snapshot-cleanup '* ]]; then
-   mkdir -p "$STATE.snapshots"
-   while [[ "$1" != sh ]]; do shift; done
-   shift
-   args=()
-   for arg in "$@"; do args+=("$(printf '%s' "$arg" | sed "s|/var/lib/postgresql/data|$STATE.snapshots|g")"); done
-   if [[ "$(uname)" == Darwin ]]; then args[1]="$(printf '%s' "\${args[1]}" | sed -e 's|stat -c %a|stat -f %Lp|g' -e 's|stat -c %u|stat -f %u|g')"; fi
-   sh "\${args[@]}" | sed "s|$STATE.snapshots|/var/lib/postgresql/data|g"
-   exit \${PIPESTATUS[0]}
-  fi
   if [[ "$*" == *pg_restore* ]]; then
-   [[ "$*" == *--jobs=2* && "$*" != *'exec -i'* ]] || exit 59
+   [[ "$*" == *'exec -i'* && "$*" != *--jobs* ]] || exit 59
+   cat >/dev/null
    if [[ "$MODE" == socket-bootstrap || "$MODE" == tcp-never-ready ]]; then
     [[ "$*" == *'-h 127.0.0.1'* && -f "$EVENTS.tcp-ready" ]] || { echo restore-before-stable >> "$EVENTS"; exit 57; }
     echo staging-restore >> "$EVENTS"

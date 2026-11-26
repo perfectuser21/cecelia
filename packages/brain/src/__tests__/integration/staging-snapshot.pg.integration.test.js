@@ -22,7 +22,7 @@ function snapshotService(serverAddress) {
 }
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 
-it('真实完整归档经生产helper落私有文件并jobs2恢复父子、非默认schema及LOB；恢复错误闭锁', async () => {
+it('真实完整流式快照经生产helper恢复父子、非默认schema及LOB；producer与restore错误闭锁', async () => {
   expect(process.env.CI === 'true' ? ['cecelia_scratch', 'cecelia_test'] : ['cecelia_scratch']).toContain(DB_DEFAULTS.database);
   const id = randomUUID().replaceAll('-', '');
   const source = `snapshot_src_${id}`, target = `snapshot_dst_${id}`;
@@ -31,7 +31,7 @@ it('真实完整归档经生产helper落私有文件并jobs2恢复父子、非�
   let sourceClient, restoredClient, service = '';
   await admin.connect();
   try {
-    const {rows: [server]} = await admin.query("SELECT current_setting('server_version_num')::int / 10000 AS major, host(inet_server_addr()) AS address");
+    const {rows: [server]} = await admin.query("SELECT current_setting('server_version_num')::int / 10000 AS major, host(inet_server_addr()) AS address, current_setting('data_directory') AS data_directory");
     service = snapshotService(server.address);
     await admin.query(`CREATE DATABASE ${source}`);
     await admin.query(`CREATE DATABASE ${target}`);
@@ -49,10 +49,10 @@ it('真实完整归档经生产helper落私有文件并jobs2恢复父子、非�
       INSERT INTO snapshot_extra.binary_assets VALUES (1,lo_from_bytea(0,decode('000102ffabcdef','hex')));`);
     const {rows: [{bytes}]} = await sourceClient.query('SELECT pg_database_size(current_database())::text AS bytes');
     const log = join(dir, 'commands.jsonl');
-    // 适配器仅选择测试数据库/服务/私有目录，落盘/提交/容量/恢复/清理由实际生产helper执行。
+    // 适配器仅选择独占测试数据库和同版本服务；完整流式管道由实际生产helper执行。
     const adapter = join(dir, 'adapter.cjs');
     writeFileSync(adapter, String.raw`
-const fs=require('fs'),{spawnSync}=require('child_process'),path=require('path');
+const fs=require('fs'),{spawnSync}=require('child_process');
 const e=process.env,[kind,...a]=process.argv.slice(2),service=e.SNAPSHOT_SERVICE;
 fs.appendFileSync(e.SNAPSHOT_LOG,JSON.stringify({kind,args:a})+'\n');
 const run=(command,args,env=e)=>{const r=spawnSync(command,args,{env,stdio:'inherit'});process.exit(r.status??1);};
@@ -67,34 +67,34 @@ if(a[0]==='inspect'){
 if(a[0]!=='exec')process.exit(99);
 const interactive=a[1]==='-i',at=interactive?3:2,args=a.slice(at);
 if(args[0]==='pg_restore'){
- if(interactive||!args.includes('--jobs=2')||!args.at(-1).endsWith('/archive'))process.exit(98);
+ if(!interactive||args.some(x=>x.startsWith('--jobs'))||args.some(x=>x.includes('/archive')))process.exit(98);
  args[args.indexOf('-d')+1]=e.SNAPSHOT_TARGET;args[args.indexOf('-U')+1]=e.PGUSER;
  if(e.SNAPSHOT_FAIL_RESTORE==='1')args.push('--use-list=/missing-restore-list');
 }
 if(service){
  run('docker',['exec',...(interactive?['-i']:[]),'-e','PGUSER','-e','PGPASSWORD','-e','PGHOST=127.0.0.1','-e','PGPORT=5432',service,...args]);
 }
-for(let i=0;i<args.length;i++)args[i]=args[i].replaceAll('/var/lib/postgresql/data',e.SNAPSHOT_VOLUME);
-if(args[0]==='sh'&&process.platform==='darwin')args[2]=args[2].replaceAll('stat -c %a','stat -f %Lp').replaceAll('stat -c %u','stat -f %u');
-const r=spawnSync(args[0],args.slice(1),{env:e,stdio:[0,'pipe','pipe']});
-if(r.stdout)fs.writeSync(1,r.stdout.toString().replaceAll(e.SNAPSHOT_VOLUME,'/var/lib/postgresql/data'));if(r.stderr)fs.writeSync(2,r.stderr);process.exit(r.status??1);
+if(args[0]==='df')args[args.length-1]=e.SNAPSHOT_DATA_DIR;
+run(args[0],args.slice(1));
 `);
     const dump = service ? 'docker' : execFileSync('which', ['pg_dump'], {encoding:'utf8'}).trim();
     const version = execFileSync(dump, service ? ['exec', service, 'pg_dump', '--version'] : ['--version'], {encoding:'utf8'});
     expect(version).toMatch(new RegExp(`PostgreSQL\\) ${server.major}\\.`));
+    const restoreVersion=execFileSync(service?'docker':'pg_restore',service?['exec',service,'pg_restore','--version']:['--version'],{encoding:'utf8'});
+    expect(restoreVersion).toMatch(new RegExp(`PostgreSQL\\) ${server.major}\\.`));
     // pg_dump命令使用整个独占数据库，不加schema/table过滤，默认完整包含大对象。
     writeFileSync(join(dir, 'pg_dump'), `#!/usr/bin/env bash
 set -euo pipefail
 args=()
 while (($#)); do case "$1" in -h|-p|-U|-d) shift 2;; *) args+=("$1"); shift;; esac; done
-${service ? `exec docker exec -i -e PGUSER -e PGPASSWORD -e PGHOST=127.0.0.1 -e PGPORT=5432 ${quote(service)} pg_dump` : `exec ${quote(dump)}`} -d "$SNAPSHOT_SOURCE" "\${args[@]}"
+${service ? `docker exec -i -e PGUSER -e PGPASSWORD -e PGHOST=127.0.0.1 -e PGPORT=5432 ${quote(service)} pg_dump` : quote(dump)} -d "$SNAPSHOT_SOURCE" "\${args[@]}"
+if [[ "\${SNAPSHOT_FAIL_PRODUCER:-0}" == 1 ]]; then exit 42; fi
 `, {mode:0o755});
     const request = randomUUID();
     const env = {...process.env, PATH:`${dir}:${process.env.PATH}`,
       SNAPSHOT_LOG:log, SNAPSHOT_SERVICE:service, SNAPSHOT_BYTES:bytes, SNAPSHOT_REQUEST:request,
-      SNAPSHOT_SOURCE:source, SNAPSHOT_TARGET:target, SNAPSHOT_VOLUME:join(dir,'volume'),
+      SNAPSHOT_SOURCE:source, SNAPSHOT_TARGET:target, SNAPSHOT_DATA_DIR:server.data_directory,
       PGHOST:DB_DEFAULTS.host, PGPORT:String(DB_DEFAULTS.port), PGUSER:DB_DEFAULTS.user, PGPASSWORD:DB_DEFAULTS.password || ''};
-    execFileSync('mkdir', ['-p', env.SNAPSHOT_VOLUME]);
     const helper = resolve(import.meta.dirname, '../../../../../scripts/lib/brain-snapshot.sh');
     const body = `set -euo pipefail
 source ${quote(helper)}
@@ -113,28 +113,23 @@ printf 'MIGRATION_ALLOWED\\n'
     await expect(restoredClient.query('INSERT INTO snapshot_extra.capture_atoms VALUES (5,999)')).rejects.toMatchObject({code:'23503'});
     const commands = readFileSync(log,'utf8').trim().split('\n').map(JSON.parse);
     const restore = commands.find(x=>x.args.includes('pg_restore'));
-    expect(restore.args).toContain('--jobs=2');expect(restore.args).not.toContain('-i');
+    expect(restore.args).toContain('-i');expect(restore.args).toContain('e'.repeat(64));expect(restore.args.some(x=>x.startsWith('--jobs'))).toBe(false);
     expect(commands.filter(x=>x.kind==='source'&&x.args.includes('sh'))).toHaveLength(1);
     const sourceDump = commands.find(x=>x.kind==='source'&&x.args.includes('sh')).args.at(-1);
     expect(sourceDump).not.toMatch(/--exclude|--schema|--table/);
-    const cleanup = commands.find(x=>x.args.includes('snapshot-cleanup'));
-    expect(cleanup).toBeDefined();
-    const archiveDir = cleanup.args.at(-1);
-    const exists = service ? spawnSync('docker',['exec',service,'test','-e',archiveDir]) : spawnSync('test',['-e',archiveDir.replace('/var/lib/postgresql/data',env.SNAPSHOT_VOLUME)]);
-    expect(exists.status).toBe(1);
-    // 新独占目标数据库空库也会被错误恢复阻断；helper非零时后续迁移标记不可达。
+    expect(commands.some(x=>x.args.some(arg=>/snapshot-(create|receive|commit|cleanup)|archive\.part/.test(arg)))).toBe(false);
+    expect(result.stdout).toContain('phase=export_transfer_restore');
+    // 成功恢复后仍须传播producer最后的非零退出，不能由receiver成功掩盖。
+    await restoredClient.end();restoredClient=null;
+    await admin.query(`DROP DATABASE ${target}`);await admin.query(`CREATE DATABASE ${target}`);
+    const producerFailed=spawnSync('bash',['-c',body],{env:{...env,SNAPSHOT_FAIL_PRODUCER:'1'},encoding:'utf8',timeout:60000});
+    expect(producerFailed.status,producerFailed.stderr).toBe(42);expect(producerFailed.stdout).not.toContain('MIGRATION_ALLOWED');
+    restoredClient=new pg.Client({...DB_DEFAULTS,database:target});await restoredClient.connect();
+    expect((await restoredClient.query('SELECT count(*)::int AS count FROM snapshot_extra.capture_atoms')).rows).toEqual([{count:1}]);
+    // 真pg_restore错误也必须阻断helper之后的迁移标记。
     const failed = spawnSync('bash',['-c',body],{env:{...env,SNAPSHOT_FAIL_RESTORE:'1'},encoding:'utf8',timeout:60000});
     expect(failed.status,failed.stderr).not.toBe(0);expect(failed.stdout).not.toContain('MIGRATION_ALLOWED');
   } finally {
-    if (service) {
-      // 仅清理由本测试request前缀创建的目录；读取命令日志取得精确路径，禁止扫描别人目录。
-      let commands=[];try {commands=readFileSync(join(dir,'commands.jsonl'),'utf8').trim().split('\n').map(JSON.parse);}catch{}
-      const paths=new Set(commands.filter(x=>x.args.includes('snapshot-receive')).map(x=>x.args.at(-2)));
-      for(const path of paths) {
-        expect(path).toMatch(/^\/var\/lib\/postgresql\/data\/cecelia-snapshot-[a-f0-9-]{36}\.[a-zA-Z0-9]+$/);
-        execFileSync('docker',['exec',service,'sh','-ec','test ! -L "$1"; if test -d "$1"; then rm -f "$1/archive" "$1/archive.part"; rmdir "$1"; fi','cleanup',path]);
-      }
-    }
     if(sourceClient)await sourceClient.end();if(restoredClient)await restoredClient.end();
     await admin.query(`DROP DATABASE IF EXISTS ${target}`);await admin.query(`DROP DATABASE IF EXISTS ${source}`);
     await admin.end();rmSync(dir,{recursive:true,force:true});
