@@ -52,7 +52,7 @@ function fixture(t, fault = '', context = 'mac-studio') {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   for (const path of ['bin', 'state', 'fixture-hooks', 'repo/scripts/lib', 'repo/packages/brain', 'repo/logs']) mkdirSync(join(dir, path), { recursive: true });
   const repo = join(dir, 'repo');
-  for (const file of ['brain-build.sh', 'staging-deploy.sh', 'staging-verify.sh', 'lib/brain-staging.sh', 'lib/brain-candidate-docker.sh']) copyFileSync(join(root, 'scripts', file), join(repo, 'scripts', file));
+  for (const file of ['brain-build.sh', 'staging-deploy.sh', 'staging-verify.sh', 'lib/brain-staging.sh', 'lib/brain-snapshot.sh', 'lib/brain-candidate-docker.sh']) copyFileSync(join(root, 'scripts', file), join(repo, 'scripts', file));
   writeFileSync(join(dir, 'bin/docker'), `#!${process.execPath}\n${dockerFixture}`, { mode: 0o755 });
   for (const name of ['sleep', 'flock']) writeFileSync(join(dir, 'bin', name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(join(dir, 'bin/df'), '#!/bin/sh\nprintf "Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 30000000 5000000 25000000 10%% /\\n"\n', { mode: 0o755 });
@@ -345,4 +345,35 @@ test('共享候选Docker按df命令token识别磁盘检查，SHA内df不得吞�
   assert.doesNotMatch(business.stdout,/Filesystem/);
   const disk=f.run(`docker --context mac-studio exec -e EXPECTED_SHA=${sha} cecelia-admission-brain df -Pk /`);
   assert.equal(disk.status,0,disk.stderr);assert.match(disk.stdout,/^Filesystem /);
+});
+
+ test('完整快照通过私有regular归档jobs2恢复并记录绑定阶段计时', t => {
+  const f=fixture(t), result=runStage(f); assert.equal(result.status,0,result.stderr+result.stdout+JSON.stringify(f.receipt())+JSON.stringify(f.commands().slice(-15)));
+  const restore=f.commands().find(a=>a.includes('pg_restore'));
+  assert.ok(restore.includes('--jobs=2')); assert.ok(!restore.includes('-i'));
+  assert.match(restore.at(-1), /^\/var\/lib\/postgresql\/data\/cecelia-snapshot-/);
+  assert.equal(f.receipt().timings.request_id,request);assert.equal(f.receipt().timings.sha,f.sha);
+  for(const phase of ['export_transfer','restore','migration','health_readback','cleanup']) assert.ok(f.receipt().timings.stages[phase].duration_ms>=0);
+ });
+ for(const fault of ['dump-partial','dump-empty','receiver-disconnect','archive-permissions','receiver-write','receiver-limit','receiver-exact-limit','receiver-rename','receiver-wc','archive-symlink','archive-cleanup','capacity-invalid','capacity-reserve','capacity-after']) test(`快照故障闭锁迁移：${fault}`, t=>{
+  const f=fixture(t,fault),result=runStage(f);assert.notEqual(result.status,0,result.stdout+result.stderr);
+  assert.equal(f.receipt().status,'failed');assert.equal(f.state('mac-studio').migrated,undefined);
+  assert.equal(existsSync(join(f.dir,'state/snapshot-volume')),false,'失败必须沿原请求rm-v回收敏感卷');
+ });
+
+test('完整快照容量预算拒绝非法、溢出、零上限与恰好保留余量', t=>{
+ const f=fixture(t);
+ const script='source scripts/lib/brain-snapshot.sh; stage_snapshot_budget';
+ for(const [e,k] of [['-1','9000000'],['1.5','9000000'],['01','9000000'],['9007199254740992','9000000'],['1','9007199254740992'],['0','5242880'],['508','5242880'],['1','0']]){
+  assert.notEqual(f.run(`${script} '${e}' '${k}'`).status,0);
+ }
+ const valid=f.run(`${script} 508 5242881`);assert.equal(valid.status,0,valid.stderr);assert.equal(valid.stdout,'5368710136 8');
+});
+
+test('spool后请求身份替换必须拒绝恢复且保留不属于本请求的容器',t=>{
+ const f=fixture(t,'owner-after-spool'),result=runStage(f);assert.notEqual(result.status,0,result.stdout+result.stderr);
+ assert.equal(f.receipt().status,'failed');assert.equal(f.state('mac-studio').migrated,undefined);
+ assert.equal(f.commands().some(a=>a.includes('pg_restore')),false);
+ assert.equal(f.commands().some(a=>a.includes('stop')&&a.includes('cecelia-admission-db')),false);
+ assert.ok(f.state('mac-studio').containers['cecelia-admission-db']);
 });

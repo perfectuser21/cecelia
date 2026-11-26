@@ -2,6 +2,7 @@
 export const dockerFixture = String.raw`
 import fs from 'node:fs';
 import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 const original = process.argv.slice(2), e = process.env, fault = e.FAULT || '';
 fs.appendFileSync(e.DOCKER_LOG, JSON.stringify(original) + '\n');
 let a = original, host = 'local';
@@ -117,7 +118,8 @@ if (a[0] === 'inspect') {
   enforceCandidate();
   if (a[1] === 'foreign-container') result(e.IMAGE);
   if (!state.containers[a[1]]) fail('No such container');
-  if (contains('staging.request')) result(fault === 'owner' ? 'another-request' : state.containers[a[1]]);
+  if (contains('{{.Id}}')) result('e'.repeat(64));
+  if (contains('staging.request')) result((fault === 'owner'||fault==='owner-after-spool'&&state.snapshotCommitted) ? 'another-request' : state.containers[a[1]]);
   if (contains('cecelia.staging')) result(fault === 'label' ? 'unowned' : 'admission-v1');
   if (contains('State.Health')) result('healthy');
   if (contains('{{.Image}}')) result(e.IMAGE);
@@ -126,21 +128,37 @@ if (a[0] === 'stop' || a[0] === 'rm') {
   enforceCandidate();
   if (fault === 'cleanup-stop' && state.verified) fail('stop failed');
   if (receipt()?.status === 'success') fail('success receipt preceded cleanup');
-  if (a[0] === 'rm') { delete state.containers[a.at(-1)]; save(); }
+  if (a[0] === 'rm') { delete state.containers[a.at(-1)]; if(a.includes('-v')&&a.at(-1)==='cecelia-admission-db')fs.rmSync(path.join(e.STATE_DIR,'snapshot-volume'),{recursive:true,force:true});save(); }
   process.exit(0);
 }
 if (a[0] === 'exec') {
-  const name = a.find(value => ['cecelia-node-brain','cecelia-admission-brain','cecelia-admission-db'].includes(value));
+  const name = a.find(value => ['cecelia-node-brain','cecelia-admission-brain','cecelia-admission-db','e'.repeat(64)].includes(value));
   if (name === 'cecelia-node-brain') {
     enforceProduction();
-    if (contains('pg_total_relation_size')) result('100000000');
-    if (contains('pg_dump')) { if (fault === 'dump') fail('dump failed'); result('snapshot'); }
+    if (contains('pg_database_size')) result(fault==='capacity-invalid'?'9007199254740992':fault==='capacity-reserve'?'999999999999':fault.startsWith('receiver-')&&['receiver-limit','receiver-exact-limit'].includes(fault)?'508':'100000000');
+    if (contains('pg_dump')) { if (fault === 'dump') fail('dump failed'); if(fault==='dump-empty')process.exit(0);if(fault==='dump-partial'){fs.writeSync(1,'partial');fail('producer failed after bytes');} result(fault==='receiver-exact-limit'?'1234567':'snapshot'); }
     fail('unexpected production exec');
   }
   enforceCandidate();
   if (contains('pg_isready')) process.exit(0);
-  if (a.includes('df')) result('Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 30000000 5000000 25000000 10% /');
-  if (contains('pg_restore')) { fs.readFileSync(0); if (fault === 'restore') fail('restore failed'); process.exit(0); }
+  if (a.includes('df')) { state.diskChecks=(state.diskChecks||0)+1;save();if(fault==='capacity-after'&&state.diskChecks>1)result('Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 100 90 10 90% /'); if(['receiver-limit','receiver-exact-limit'].includes(fault)) result('Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 6000000 1 5242881 1% /'); result('Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 30000000 5000000 25000000 10% /'); }
+  if (a.includes('sh') && a.some(x=>x.startsWith('snapshot-'))) {
+    const command=a.indexOf('sh'),args=a.slice(command+1),base=path.join(e.STATE_DIR,'snapshot-volume');
+    fs.mkdirSync(base,{recursive:true});
+    for(let i=0;i<args.length;i++)args[i]=args[i].replaceAll('/var/lib/postgresql/data',base);
+    if(args.includes('snapshot-receive')&&fault==='receiver-write')fail('ENOSPC');
+    if(args.includes('snapshot-receive')&&fault==='receiver-disconnect'){fs.readSync(0,Buffer.alloc(1),0,1,null);fail('transport lost');}
+    if(args.includes('snapshot-commit')&&fault==='archive-permissions')fs.chmodSync(path.join(args.at(-2),'archive.part'),0o644);
+    if(args.includes('snapshot-commit')&&fault==='receiver-rename')args[1]=args[1].replace('mv ', 'false; mv ');
+    if(args.includes('snapshot-commit')&&fault==='receiver-wc')args[1]=args[1].replace('bytes=$(wc', 'bytes=$(false; exit 1; wc');
+    if(args.includes('snapshot-commit')&&fault==='archive-symlink'){const part=path.join(args.at(-2),'archive.part');fs.unlinkSync(part);fs.symlinkSync('/dev/null',part);}
+    if(args.includes('snapshot-cleanup')&&fault==='archive-cleanup')fail('cleanup failed');
+    if(process.platform==='darwin')args[1]=args[1].replaceAll('stat -c %a','stat -f %Lp').replaceAll('stat -c %u','stat -f %u');
+    const r=spawnSync('sh',args,{stdio:[0,'pipe','pipe']});
+    if(args.includes('snapshot-commit')&&r.status===0){state.snapshotCommitted=true;save();}
+    if(r.stdout)fs.writeSync(1,r.stdout.toString().replaceAll(base,'/var/lib/postgresql/data'));if(r.stderr)fs.writeSync(2,r.stderr);process.exit(r.status??1);
+  }
+  if (contains('pg_restore')) { if(a.includes('-i')||!a.includes('--jobs=2'))fail('restore requires regular archive and jobs2');const archive=a.at(-1).replace('/var/lib/postgresql/data',path.join(e.STATE_DIR,'snapshot-volume'));if(!fs.statSync(archive).isFile()||!fs.readFileSync(archive).length)fail('missing regular archive'); if (fault === 'restore') fail('restore failed'); process.exit(0); }
   if (contains('/health')) result(JSON.stringify({status:'healthy',git_sha:fault === 'health' ? 'c'.repeat(40) : e.EXPECTED_SHA,version:'1.0.0',runtime:{isolated:true,background_automation:false}}));
   if (contains('tick/status')) result('{"enabled":false}');
   if (contains('/tasks?')) result('[]');

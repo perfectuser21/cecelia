@@ -9,7 +9,7 @@ afterEach(()=>{if(dir)rmSync(dir,{recursive:true,force:true});});
 function run(mode){
  dir=mkdtempSync(join(tmpdir(),'brain-admission-'));
  for(const sub of ['scripts/lib','packages/brain','bin','logs','state'])mkdirSync(join(dir,sub),{recursive:true});
- for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','lib/brain-candidate-docker.sh','lib/brain-drain-client.sh','lib/brain-post-deploy.sh','staging-verify.sh']){
+ for(const file of ['brain-deploy.sh','staging-deploy.sh','lib/brain-staging.sh','lib/brain-snapshot.sh','lib/brain-candidate-docker.sh','lib/brain-drain-client.sh','lib/brain-post-deploy.sh','staging-verify.sh']){
   const from=join(repo,'scripts',file);if(existsSync(from))copyFileSync(from,join(dir,'scripts',file));
  }
  writeFileSync(join(dir,'packages/brain/package.json'),JSON.stringify({version:'1.445.48'}));
@@ -46,8 +46,9 @@ case "$1" in
   if [[ "$*" == *cecelia.staging.request* ]]; then cat "$STATE/$2"; exit; fi
   if [[ "$*" == *cecelia.staging* ]]; then echo admission-v1; exit; fi
   if [[ "$*" != *--format* ]]; then [[ -f "$STATE/$2" ]]; exit; fi
+  if [[ "$*" == *'{{.Id}}'* ]]; then printf '%064d\n' 1; exit; fi
   if [[ "$*" == *State.Health* ]]; then echo healthy; elif [[ "$*" == *'{{.Image}}'* || "$*" == *'{{.Id}}'* ]]; then if [[ "$MODE" == wrong-digest ]]; then echo "sha256:wrong"; else echo "$DIGEST"; fi; else exit 1; fi; exit 0;;
- rm) for arg in "$@"; do case "$arg" in cecelia-admission-*) rm -f "$STATE/$arg";; esac; done; exit 0;;
+ rm) for arg in "$@"; do case "$arg" in cecelia-admission-*) rm -f "$STATE/$arg"; [[ "$arg" != cecelia-admission-db ]] || rm -rf "$STATE.snapshots";; esac; done; exit 0;;
  stop|tag) exit 0;;
  run)
   name=""; previous=""; owner=""
@@ -63,11 +64,21 @@ case "$1" in
   fi
   echo container; exit 0;;
  exec)
-  if [[ "$*" == *pg_total_relation_size* ]]; then echo 100000000; exit 0; fi
+  if [[ "$*" == *pg_database_size* ]]; then echo 100000000; exit 0; fi
   if [[ "$*" == *'df -Pk'* ]]; then if [[ "$MODE" == disk-full ]]; then printf 'Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 1000 950 50 95%% /\n'; exit; fi; printf "Filesystem 1024-blocks Used Available Capacity Mounted\nfixture 30000000 5000000 25000000 10%% /\n"; exit 0; fi
   if [[ "$*" == *pg_dump* ]]; then echo dump; exit 0; fi
+  if [[ " $* " == *' snapshot-create '* || " $* " == *' snapshot-receive '* || " $* " == *' snapshot-commit '* || " $* " == *' snapshot-cleanup '* ]]; then
+   mkdir -p "$STATE.snapshots"
+   while [[ "$1" != sh ]]; do shift; done
+   shift
+   args=()
+   for arg in "$@"; do args+=("$(printf '%s' "$arg" | sed "s|/var/lib/postgresql/data|$STATE.snapshots|g")"); done
+   if [[ "$(uname)" == Darwin ]]; then args[1]="$(printf '%s' "\${args[1]}" | sed -e 's|stat -c %a|stat -f %Lp|g' -e 's|stat -c %u|stat -f %u|g')"; fi
+   sh "\${args[@]}" | sed "s|$STATE.snapshots|/var/lib/postgresql/data|g"
+   exit \${PIPESTATUS[0]}
+  fi
   if [[ "$*" == *pg_restore* ]]; then
-   cat >/dev/null
+   [[ "$*" == *--jobs=2* && "$*" != *'exec -i'* ]] || exit 59
    if [[ "$MODE" == socket-bootstrap || "$MODE" == tcp-never-ready ]]; then
     [[ "$*" == *'-h 127.0.0.1'* && -f "$EVENTS.tcp-ready" ]] || { echo restore-before-stable >> "$EVENTS"; exit 57; }
     echo staging-restore >> "$EVENTS"

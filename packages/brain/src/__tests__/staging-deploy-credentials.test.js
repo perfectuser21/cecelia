@@ -23,6 +23,7 @@ function fixture({ docker = true, stagingEnv = true } = {}) {
   expect(source.split(legacyDefault).length - 1).toBeLessThanOrEqual(1);
   writeFileSync(f.script, source.replace(legacyDefault, join(f.macHome, '.credentials/cecelia-internal.env')));
   writeFileSync(join(scripts, 'lib/brain-staging.sh'), helper);
+  writeFileSync(join(scripts, 'lib/brain-snapshot.sh'), readFileSync(join(root, 'scripts/lib/brain-snapshot.sh'), 'utf8'));
   writeFileSync(join(scripts, 'lib/brain-candidate-docker.sh'), readFileSync(join(root, 'scripts/lib/brain-candidate-docker.sh'), 'utf8'));
   writeFileSync(join(dir, 'packages/brain/package.json'), '{"version":"9.9.9"}\n');
   if (stagingEnv) writeFileSync(join(dir, '.env.staging'), 'DB_PASSWORD=synthetic_fixture_only\n');

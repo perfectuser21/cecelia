@@ -47,6 +47,7 @@ export function commandsFor(component, shard) {
           'src/__tests__/integration/native-agent-scheduler.pg.integration.test.js',
           'src/__tests__/integration/external-exec-orphan-liveness.integration.test.js',
           'src/__tests__/integration/staging-native-business.pg.integration.test.js',
+          'src/__tests__/integration/staging-snapshot.pg.integration.test.js',
           'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
           'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
