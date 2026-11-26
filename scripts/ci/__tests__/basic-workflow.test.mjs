@@ -93,7 +93,7 @@ test('退出旧API集成跑道，只有现役Brain PG组件可启动数据库', 
   const job = workflow.jobs.checks;
   assert.equal(job.env.API_PG_INTEGRATION, '0');
   assert.equal(job.services.postgres.image,
-    "${{ matrix.component == 'brain-integration' && 'mirror.gcr.io/pgvector/pgvector:pg15' || '' }}");
+    "${{ matrix.component == 'brain-integration' && 'mirror.gcr.io/pgvector/pgvector:pg17' || '' }}");
   assert.ok(!workflow.jobs.checks.strategy.matrix.include.some(row => row.component === 'api-integration'));
 });
 
