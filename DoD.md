@@ -1,15 +1,14 @@
-# 消除测试入口重复hash与业务回归冗余冷却等待
+# 清退无消费者的旧夜间任务标记调度器
 
-Task: 0e28d02d-2408-4347-bb0e-a76b74bdb1bc
+Task: 230d4015-60e7-44c1-a59b-0b7bed33989b
 GP-Anchor: none(infra)
 
-- [ ] 两处安全fixture使用冻结小型入口但真实执行Node/MCP与子孙进程；wrapper与entry漂移及孙进程清理保护保持可触发。
-  Test: manual:npm test --workspace packages/brain -- src/orchestrator/__tests__/commander-checker-boundary.test.js src/orchestrator/__tests__/commander-host-tools.test.js
-- [ ] 原诊断业务断言完整保留，独立固定5秒冷却与释放/派发/响应顺序保护通过；破坏真实诊断分支时回归报红。
-  Test: manual:npm test --workspace packages/brain -- src/__tests__/execution-callback-no-diagnostic.test.js src/__tests__/callback-cooldown.test.js src/__tests__/callback-resilience.test.js
-- [ ] 默认Brain文件集合与相关原案例多重集合不减，版本同步与完整CI通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [ ] main push与dispatch保留原串行组但用max队列，避免pending被新main替换；PR/Dependabot/schedule原策略保持，真实YAML恢复single会报红。
-  Test: manual:node --test scripts/ci/__tests__/basic-concurrency.test.mjs
-- [ ] Nightly主集成的服务内PG客户端与已验证PR跑道同版，避免方法压缩参数不兼容；地图烟测和私有PG后端范围不扩大。
-  Test: manual:node --test scripts/ci/__tests__/basic-nightly-consolidation.test.mjs
+- [x] 真实启动函数不启动旧编排，现役 Tick、Notion 同步及目录恢复接线保留。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain src/__tests__/server-dormant-boundaries.test.js
+- [x] 真实状态 HTTP 保留停用封套与现役队列统计；历史日报原路由与 getter 只读取旧记录。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain src/routes/__tests__/briefing-read-api.test.js
+- [x] 注册表只清退无消费者标签，普通任务资格与共享保护仍有效。
+  Test: manual:node node_modules/vitest/vitest.mjs run --root packages/brain src/__tests__/task-type-registry.guard.test.js src/lib/__tests__/task-type-registry.test.js
+- [x] 版本同步、事实与源码配置有效；旧专属 PG 入口随模块清退，GHA 夜间回归保留。
+  Test: manual:node scripts/facts-check.mjs
+  Test: manual:bash scripts/check-version-sync.sh
