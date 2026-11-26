@@ -72,10 +72,10 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
     const runtimeModule=`import {dirname,join} from 'node:path';
       import {fileURLToPath} from 'node:url';
       import {readFileSync,writeFileSync} from 'node:fs';
-      export async function startStandaloneSkillRuntime({runDirectory}) {
+      export async function startStandaloneSkillRuntime({runDirectory,environment}) {
         if (dirname(fileURLToPath(import.meta.url)) !== join(runDirectory,'runtime')) throw Error('EPOCH_ADMISSION_SCOPE');
         if (readFileSync(join(runDirectory,'attested'),'utf8') !== JSON.parse(readFileSync(join(runDirectory,'run-definition.json'))).standalone_skill.run_id) throw Error('NOT_ATTESTED');
-        writeFileSync(join(runDirectory,'native-host-loaded'),'yes',{mode:0o600});
+        writeFileSync(join(runDirectory,'native-host-loaded'),environment.BRAIN_URL??'missing',{mode:0o600});
         return {connectionPath:'fixture-connection',close:async()=>{},readEvidence:async()=>JSON.parse(readFileSync(join(runDirectory,'native-proof.json')))};
       }`;
     const ipcModule=`export async function callStandaloneSkillTool(){return {ok:true,result:{ok:true,result:{metrics_verified:true,metrics_digest:'abc'}}};}`;
@@ -99,7 +99,7 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
         for(const [name,bytes] of Object.entries(runtimeFiles)) writeFileSync(join(runRuntime,name),bytes,{mode:0o600});
         const files=Object.fromEntries(Object.entries(profile.files).map(([name,digest])=>['runtime/'+name,digest]));
         if(variant==='unregistered') delete files['runtime/'+nativeEntry];
-        return {env:{},snapshot:{files,standalone_skill:{...identity,company,scope,scope_sha256:hash(scope)}}};
+        return {env:{BRAIN_URL:'http://127.0.0.1:1'},snapshot:{files,standalone_skill:{...identity,company,scope,scope_sha256:hash(scope)}}};
       },
     };
     const saveProof=proof=>writeFileSync(join(runDir,'native-proof.json'),JSON.stringify(proof),{mode:0o600});
@@ -112,6 +112,7 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
         const assert=require('node:assert/strict'), fs=require('node:fs'), args=process.argv.slice(2);
         assert.equal(args[0],'exec');
         assert.match(args.at(-1),/执行冻结的 101 Skill/);
+        assert.equal(process.env.BRAIN_URL,undefined);
         let input='';
         process.stdin.setEncoding('utf8').on('data', chunk=>{input+=chunk;});
         process.stdin.on('end',()=>{
@@ -121,7 +122,8 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
       `,{mode:0o700});
       codex={command,model:'fixture',auth:{mode:'api-only',home}};
     }
-    const services=await createDiscoveryServices(job,{profile,skillPath,stateRoot:root,toolkit,codex},{
+    const brainUrl='http://127.0.0.1:41234';
+    const services=await createDiscoveryServices(job,{profile,skillPath,stateRoot:root,toolkit,codex,brainUrl},{
       post:async(path,body)=>{
         if (path.endsWith('/start-skill')) {
           calls.push('start');
@@ -151,7 +153,7 @@ test.each([['101','bound'],['102','bound'],['103','bound'],['101','changed'],['1
       return;
     }
     const host=await services.startHost();
-    assert.equal(readFileSync(join(runDir,'native-host-loaded'),'utf8'),'yes');
+    assert.equal(readFileSync(join(runDir,'native-host-loaded'),'utf8'),brainUrl);
     await services.runAgent(host);
     if(realChild)assert.deepEqual(JSON.parse(readFileSync(join(runDir,'agent-receipt.json'))),{video});
     const evidence=(await services.verifyBusiness(host)).evidence;
