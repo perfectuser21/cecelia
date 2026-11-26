@@ -85,5 +85,9 @@ test('默认unit不登记休眠开启态或PG专属；deep保PG，Ops保Python�
  assert.ok(unit.includes(root+'packages/brain/src/__tests__/consciousness-loop-disabled.test.js'));
  assert.ok(!unit.includes(pg));assert.ok(deep.includes(pg));
  assert.ok(!unit.includes(root+'packages/brain/src/__tests__/opc-company-kr.test.js'));
- assert.ok(commandsFor('ops').some(step=>step.command==='bash'&&step.args.includes('scripts/ops/__tests__/opc_company_kr.test.sh')),'Python真实Ops owner不能随重复wrapper清退');
+ assert.deepEqual(commandsFor('ops').filter(step=>step.args.at(-1).startsWith('scripts/ops/__tests__/opc_'))
+  .map(step=>({command:step.command,args:step.args})),[
+   {command:'bash',args:['scripts/ops/__tests__/opc_batch_migration.test.sh']},
+   {command:'bash',args:['scripts/ops/__tests__/opc_objects_config.test.sh']},
+  ],'Ops实际入口保留对象同步与CLI，KR/OKR专属专项随实现退役');
 });

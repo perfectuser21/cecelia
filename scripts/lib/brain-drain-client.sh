@@ -41,6 +41,21 @@ brain_drain_response() {
           if(!Array.isArray(value.blockers)||value.blockers.length!==value.remaining)throw Error();
           if(!Number.isSafeInteger(value.independent_task_count)||value.independent_task_count<0)throw Error();
           if(value.safe_to_swap!==(value.remaining===0))throw Error();
+          // Native deploy logs retain the last validated sample even if drain is later cancelled.
+          // Never copy payloads, titles, arbitrary strings or unvalidated generations into evidence.
+          const kinds=new Set(["shared_controller","local_execution","launch","unknown"]);
+          const reasons=new Set(["brain_owned_controller","executor_registry_entry","launch_in_flight",
+            "invocation_completion_unconfirmed","brain_ownership_not_settled","execution_owner_unknown","drain_persistence_unconfirmed"]);
+          const uuid=x=>typeof x==="string"&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(x);
+          const blockers=value.blockers.map(item=>({
+            kind:kinds.has(item?.kind)?item.kind:"unknown",
+            reason:reasons.has(item?.reason)?item.reason:"unrecognized_reason",
+            ...(uuid(item?.task_id)?{task_id:item.task_id}:{}),
+            ...(uuid(item?.run_id)?{run_id:item.run_id}:{}),
+          }));
+          process.stderr.write(`BRAIN_DRAIN_EVIDENCE ${JSON.stringify({observed_at:new Date().toISOString(),
+            protocol:value.protocol,drain_id:value.drain_id,safe_to_swap:value.safe_to_swap,
+            remaining:value.remaining,independent_task_count:value.independent_task_count,blockers})}\n`);
           process.stdout.write(`${value.safe_to_swap?"ready":"waiting"} ${value.drain_id}`);
         }catch{
           process.stderr.write("排空响应的协议、身份或就绪证据不符\n");process.exitCode=1;

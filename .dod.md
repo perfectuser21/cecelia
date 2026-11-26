@@ -1,20 +1,13 @@
-# 轻盈底座本机 RPC 使用已验证的 Brain 地址
+# 清退旧 KR/OKR 自动链并补齐发布排空诊断
 
-Task: b9a889dc-afd9-43bb-b50f-59407c5dad49
+Task: b556cbb4-4062-4297-8b7c-a6d66c5c8320
 GP-Anchor: none(infra)
 
-- [x] CLI 从私有配置读取本机 Brain 地址，调度、独立 Skill provider 和冻结 native RPC 使用同一地址。
-  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/worker.test.mjs scripts/standalone-skill/native-discovery.test.mjs
-- [x] 业务地址只传受信本机 provider，模型子进程仍使用现行白名单和认证。
-  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/native-discovery.test.mjs
-
-## 悦升 101 末次清理握手复核
-
-- [x] 只允许原清理中已经正常结束的唯一 HOME 和特定观察顺序，最后一次 version 的未知握手须由完整叶账原字节支持。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
-- [x] 拒绝缺失或被改写的叶账、未知出现在 HOME、未知命令及不匹配的桌面和中央锁。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
-- [x] 已有探针结算、重放和隔离租约回归通过，保留原失败回执。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
-
-Brain Task 594f3bdb-1363-456b-b033-2e1f095d1641
+- [x] 退出旧 KR/OKR 专属脚本与专项测试，保留正式 KR API、对象同步与实际 Ops 收集入口。
+  Test: manual:node --test scripts/ci/__tests__/basic-integration-once.test.mjs
+- [x] 排空客户端只记录验证后的白名单证据，保留现行协议、身份校验、等待预算与取消行为。
+  Test: manual:node --test scripts/ci/__tests__/basic-brain-drain-evidence.test.mjs
+- [ ] 集成源码通过完整 Scripts/Ops 与独立 review，正常 PR 严格 CI 合并。
+  Test: manual:node scripts/ci/run-basic-check.mjs scripts && node scripts/ci/run-basic-check.mjs ops
+- [ ] 后继实际 main CD、native 发布与生产 Node22 验收由 Root 读回，源码合并不能代替生产成功。
+  Test: manual:curl --fail http://localhost:5221/api/brain/health && gh run view --log --repo perfectuser21/cecelia
