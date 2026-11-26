@@ -22,7 +22,7 @@ import { SSH_BASE_ARGS } from './lib/ssh-args.js';
 
 export const OPENCLAW_AGENT_EXECUTOR_KIND = 'openclaw-agent';
 export const SCRIPT_EXECUTOR_KIND = 'script';
-// coding workflow runner：执行机 LaunchDaemon 认领 task_type=data 的开关任务跑 coding 链，进程不在 Brain 本机。
+// 仅保留旧执行体的历史判活兼容；新建与认领入口均已关闭。
 export const CODING_WORKFLOW_RUNNER_EXECUTOR_KIND = 'coding-workflow-runner';
 
 export const VALID_EXECUTOR_KINDS = [
@@ -38,7 +38,6 @@ export const VALID_EXECUTOR_KINDS = [
   'codex-review-local',
   OPENCLAW_AGENT_EXECUTOR_KIND,
   SCRIPT_EXECUTOR_KIND,
-  CODING_WORKFLOW_RUNNER_EXECUTOR_KIND,
 ];
 
 // ─── 打标映射（各派发点用的快查表）────────────────────────────────────────────

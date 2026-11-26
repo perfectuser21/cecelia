@@ -47,7 +47,7 @@ export const SURFACE_FOR_ROUTE = Object.freeze({
 const REVIEW = new Set(REVIEW_TASK_TYPES);
 
 const ROUTE_REASON = Object.freeze({
-  'retired-development': '旧开发编排已删除；有头开发使用dev，无头开发使用coding_workflow',
+  'retired-development': '旧自主开发编排已删除；用户开发由dev会话或codex_dev Agent执行',
   'claude-retired': 'location=us 落在已退役的 US Claude 桥接路径（任务 76a160b3），无执行者',
   'external-mirror': '外部起跑的账本镜像（执行机自己起跑，Brain 只记账），只以 in_progress/终态入账，queued 无人领',
 });
@@ -124,6 +124,6 @@ export function assertTaskTypeHasExecutor({ task_type, status = 'queued', payloa
  */
 export function normalizeBorrowedTaskType(requestedType, payload = {}) {
   if (requestedType === 'research' && payload?.factory_dispatch === true) return 'skill_factory_run';
-  if (requestedType === 'data' && payload?.coding_workflow === true) return 'coding_workflow';
+  assertActiveDevelopmentTask({ task_type: requestedType, payload });
   return requestedType;
 }

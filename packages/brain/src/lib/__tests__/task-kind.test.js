@@ -39,7 +39,7 @@ describe('注册表每个 task_type 都声明 kind', () => {
   });
 
   it('编排型（≥2 阶段/子任务）= workflow，一步交付 = agent（判据钉死代表类型）', () => {
-    for (const t of ['workflow_run', 'coding_workflow', 'workflow_dispatch', 'crystallize', 'project']) {
+    for (const t of ['workflow_dispatch', 'workflow_run', 'crystallize', 'project']) {
       expect(R.KIND_FOR_TASK_TYPE[t], t).toBe('workflow');
     }
     for (const t of ['dev', 'research', 'qiumi_task', 'device_job', 'codex_dev', 'ci_patrol', 'crystallize_forge']) {

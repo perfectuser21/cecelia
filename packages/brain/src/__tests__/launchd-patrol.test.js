@@ -68,7 +68,7 @@ describe('launchd-patrol manifest 核对', () => {
     const r = await runLaunchdPatrol({ exec: makeExec(), inContainer: false });
     expect(r.ok).toBe(true);
     expect(r.anomalies).toEqual([]);
-    expect(r.checked).toBe(7);
+    expect(r.checked).toBe(6);
     expect(sendBark).not.toHaveBeenCalled();
     expect(raise).not.toHaveBeenCalled();
     expect(reportIncident).not.toHaveBeenCalled();
@@ -134,17 +134,13 @@ describe('launchd-patrol manifest 核对', () => {
     expect(reportIncident).not.toHaveBeenCalled();
   });
 
-  it('coding workflow runner 登记为周期型 must-load（未加载即告警）', async () => {
-    expect(MUST_LOAD_DAEMONS).toContain('com.cecelia.coding-workflow-runner');
-    const r = await runLaunchdPatrol({
-      exec: makeExec({ notLoaded: ['com.cecelia.coding-workflow-runner'] }),
-      inContainer: false,
-    });
-    expect(r.anomalies).toEqual(['not_loaded:com.cecelia.coding-workflow-runner']);
-    expect(reportIncident).toHaveBeenCalledTimes(1);
-    expect(reportIncident).toHaveBeenCalledWith('launchd-patrol', 'launchd-patrol:com.cecelia.coding-workflow-runner', 'p1', {
-      anomaly: 'not_loaded:com.cecelia.coding-workflow-runner', msg: '宿主 launchd 巡检发现 1 项异常: not_loaded:com.cecelia.coding-workflow-runner',
-    });
+  it('旧自主runner停用后不检查、不告警，也不要求恢复', async () => {
+    const exec = makeExec({ notLoaded: ['com.cecelia.coding-workflow-runner'] });
+    const r = await runLaunchdPatrol({ exec, inContainer: false });
+    expect(MUST_LOAD_DAEMONS).not.toContain('com.cecelia.coding-workflow-runner');
+    expect(r.anomalies).toEqual([]);
+    expect(exec.mock.calls.some(([cmd]) => cmd.includes('print system/com.cecelia.coding-workflow-runner'))).toBe(false);
+    expect(reportIncident).not.toHaveBeenCalled();
   });
 
   it('端口不通 → port_down 检出', async () => {

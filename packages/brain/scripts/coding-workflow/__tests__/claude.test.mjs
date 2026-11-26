@@ -1,5 +1,5 @@
 // lib/claude.mjs 单测：超时计算、失败映射、进程组收割、越界写快照（spec/build/verify 共用）。
-// 取消路径（执行器 SIGTERM）会让活动进程 process.exit，不在本进程内测，由 spec.test 经 callActivityProcess 覆盖。
+// 真实 SIGTERM 取消与孙进程清理由 provider-cancel.test.mjs 独立子进程覆盖。
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';

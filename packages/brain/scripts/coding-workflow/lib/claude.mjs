@@ -6,13 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { spawn, execFile } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { fail, childEnv, log, currentCommanderGuidance } from './protocol.mjs';
-import { claudeOwnErrorText, sessionCostUsd } from './transcript.mjs';
+import { claudeOwnErrorText, sessionCostUsd } from './provider-output.mjs';
 import { prepareCodexSession } from './codex-session.mjs';
-import { captureNativeExecution } from './record-provenance.mjs';
 
-const PROMPTS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '../prompts');
 // 只认 claude CLI 自身的鉴权/额度报错措辞；裸 login、/login 路由等业务输出不算
 const AUTH_RE = /\bauthenticat|please run \/login|invalid api key|quota|rate limit|usage limit|not logged in|login required/i;
 const KILL_GRACE_MS = 5000; // 超时 SIGTERM 之后到 SIGKILL 的宽限
@@ -59,11 +56,6 @@ function withModel(args) {
 /** 把模板里的 `{{KEY}}` 换成 vars[KEY]（值按字面量插入，不解释 `$&` 等替换序列）。 */
 export function renderPrompt(template, vars) {
   return Object.entries(vars).reduce((text, [key, value]) => text.replaceAll(`{{${key}}}`, () => value), template);
-}
-
-/** 读 prompts/<name>.md 并渲染。 */
-export function loadPrompt(name, vars) {
-  return renderPrompt(fs.readFileSync(path.join(PROMPTS_DIR, `${name}.md`), 'utf8'), vars);
 }
 
 /**
@@ -138,9 +130,7 @@ export async function runClaude({ args: callerArgs, cwd, timeoutMs, tag, isolate
   const args = native?.args ?? withModel(withCostOutput(callerArgs));
   const priced = (run) => {
     const result = { ...run, provider, model: provider === 'codex' ? codexEnv.CODING_WF_CODEX_MODEL || process.env.CODING_WF_CODEX_MODEL || null : process.env.CODING_WF_CLAUDE_MODEL || DEFAULT_MODEL, cost_usd: provider === 'codex' ? null : sessionCostUsd(run.stdout ?? ''), ...(transcriptPath ? { transcriptPath } : {}) };
-    // 直接采集进程管道返回值；不回读模型可以改写的 transcriptPath/logDir。
-    const event = captureNativeExecution({ ...result, tag });
-    return event ? { ...result, source_native_event_id: event.id } : result;
+    return result;
   };
   if (!isolateRemote && provider === 'claude') return priced(await spawnClaude({ args, cwd, timeoutMs, tag, env: claudeEnv(), transcriptPath }));
   const ghConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-wf-gh-'));

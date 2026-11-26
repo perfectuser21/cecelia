@@ -87,13 +87,13 @@ describe('selectPipeline 四格路由', () => {
     expect(d.pipeline).toBe('canvas');
     expect(d.answer_known).toBe(true);
   });
-  it('code 类无头走 coding_workflow runner(A2,无头 kernel 已退役),有头使用dev账本,四格字段随行留痕', () => {
+  it('用户开发交普通Codex Agent,有头使用dev账本,四格字段随行留痕', () => {
     const d = selectPipeline({
       work_kind: 'coding_mutation', change_kind: 'bugfix',
       artifact_kind: 'code', answer_known: true,
     });
-    expect(d.pipeline).toBe('coding_workflow');
-    expect(d.orchestrator).toBe('coding-workflow-runner');
+    expect(d.pipeline).toBe('agent_development');
+    expect(d.orchestrator).toBe('codex-bridge');
     expect(selectPipeline({
       work_kind: 'coding_mutation', change_kind: 'bugfix',
       artifact_kind: 'code', answer_known: true, headed: true,
@@ -108,9 +108,9 @@ describe('selectPipeline 四格路由', () => {
 });
 
 describe('routeWork 端到端携带四格', () => {
-  it('默认租户走当前代码runner，真实租户只走执行交付且不要求仓库', () => {
+  it('默认租户走普通开发Agent，真实租户只走执行交付且不要求仓库', () => {
     const code = routeWork({ ...base, payload: { tenant_id: 'default' } }, FACTS);
-    expect(code).toMatchObject({ artifact_kind: 'code', canonical_task_type: 'coding_workflow', orchestrator: 'coding-workflow-runner' });
+    expect(code).toMatchObject({ artifact_kind: 'code', canonical_task_type: 'codex_dev', orchestrator: 'codex-bridge' });
     const execution = routeWork({ ...base, repo_hint: undefined, payload: { tenant_id: 'fixture-tenant' } }, []);
     expect(execution.artifact_kind).toBe('execution');
     expect(execution.repo).toBeNull();
@@ -131,7 +131,7 @@ describe('routeWork 端到端携带四格', () => {
     const d = routeWork({ ...base, map_scope_hint: ['F1'] }, FACTS);
     expect(d.artifact_kind).toBe('code');
     expect(d.answer_known).toBe(true);
-    expect(d.pipeline).toBe('coding_workflow');
+    expect(d.pipeline).toBe('agent_development');
     expect(d.repo).toBe('cecelia');
   });
 });

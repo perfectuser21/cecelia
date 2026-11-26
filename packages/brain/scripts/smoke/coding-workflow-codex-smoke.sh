@@ -4,4 +4,4 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 npx vitest run scripts/coding-workflow/__tests__/codex-session.test.mjs \
   scripts/coding-workflow/__tests__/codex-files.test.mjs \
-  scripts/coding-workflow/__tests__/transcript.test.mjs --maxWorkers=1 --minWorkers=1
+  scripts/coding-workflow/__tests__/provider-output.test.mjs --maxWorkers=1 --minWorkers=1

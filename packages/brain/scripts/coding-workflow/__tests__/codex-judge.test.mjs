@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { callJudge, resolveJudgeConfig, parseJudge, decideJudge } from '../lib/judge.mjs';
+import { callCodexJudge as callJudge, inspectJudgeInput } from '../lib/codex-judge.mjs';
 import { runClaude, claudeFailure } from '../lib/claude.mjs';
 
 const prompt = { system: '独立裁判，只返回JSON', user: '检查完整需求与证据' };
@@ -15,11 +15,12 @@ function fixture(script) {
   return { dir, bin, cleanup: () => fs.rmSync(dir, { recursive: true, force: true }) };
 }
 describe('独立原生Codex裁判', () => {
-  it('明确选择Codex时不读取API凭据，冻结独立模型与账号路径', () => {
-    const cfg = resolveJudgeConfig({ CODING_WF_JUDGE_PROVIDER: 'codex', CODING_WF_CODEX_HOME: '/account', CODING_WF_CODEX_BIN: '/bin/codex', CODING_WF_JUDGE_MODEL: 'judge-model' });
-    expect(cfg).toMatchObject({ provider: 'codex', model: 'judge-model', codexHome: '/account', codexBin: '/bin/codex' });
-    expect(cfg.key).toBeUndefined();
-    expect(() => resolveJudgeConfig({ CODING_WF_JUDGE_PROVIDER: 'unknown' })).toThrow('judge_provider_unsupported');
+  it('冻结完整stdin材料与输入预算，不读取API凭据', () => {
+    const input = inspectJudgeInput(prompt);
+    expect(input.stdin).toBe(`${prompt.system}\n\n${prompt.user}`);
+    expect(input.stdin_bytes).toBe(Buffer.byteLength(input.stdin));
+    expect(input.stdin_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(() => inspectJudgeInput({ ...prompt, user: 'x'.repeat(70000) }, 65536)).toThrow('judge_input_budget_exceeded');
   });
   it('真实子进程只接收stdin完整prompt，保留原生事件并走原有严格判定', async () => {
     const f = fixture(`import fs from 'node:fs';
@@ -40,9 +41,6 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:3,output_t
       expect(JSON.parse(r.content)).toEqual(answer);
       expect(r).toMatchObject({ provider: 'codex', cost_usd: null, usage: { input_tokens: 3, output_tokens: 4 } });
       expect(fs.readFileSync(transcriptPath, 'utf8')).toContain('judge-only');
-      const parsed = parseJudge(r.content, { intentIds: ['I-1'] });
-      expect(parsed.errors).toEqual([]);
-      expect(decideJudge(parsed).verdict).toBe('PASS');
     } finally { for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key]; Object.assign(process.env, old); f.cleanup(); }
   });
   it('CLI未消费stdin便伪造完成事件不能当完整输送成功', async () => {
@@ -92,9 +90,9 @@ describe('裁判必须核验实际native运输输入', () => {
     const captured = path.join(f.dir, 'actual-stdin');
     fs.writeFileSync(f.bin, fs.readFileSync(f.bin, 'utf8').replace(JSON.stringify('CAPTURE_PLACEHOLDER'), JSON.stringify(captured)));
     try {
-      const isolated = await import('../lib/judge.mjs?actual-transport-identity');
+      const isolated = await import('../lib/codex-judge.mjs?actual-transport-identity');
       let failure, reply;
-      try { reply = await isolated.callJudge(prompt, { provider:'codex', model:'judge-model', codexHome:f.dir, codexBin:f.bin, transcriptPath:path.join(f.dir,'native.jsonl'), timeoutMs:3000 }); }
+      try { reply = await isolated.callCodexJudge(prompt, { provider:'codex', model:'judge-model', codexHome:f.dir, codexBin:f.bin, transcriptPath:path.join(f.dir,'native.jsonl'), timeoutMs:3000 }); }
       catch (error) { failure = error; }
       const actual = fs.readFileSync(captured);
       const expected = Buffer.from(`${prompt.system}\n\n${prompt.user}`);

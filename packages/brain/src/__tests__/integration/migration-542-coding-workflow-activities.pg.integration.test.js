@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { DB_DEFAULTS } from '../../db-config.js';
-import { CODING_WORKFLOW_ID, ACTIVITY_IDS } from '../../../scripts/coding-workflow/runner/lib/spans.mjs';
+import { CODING_WORKFLOW_ID, ACTIVITY_IDS } from '../fixtures/retired-coding-workflow-ids.js';
 
 const body = (file) => readFileSync(new URL(`../../../migrations/${file}`, import.meta.url), 'utf8')
   .split('\n').filter((line) => !/^\s*(BEGIN|COMMIT);\s*$/.test(line)).join('\n');

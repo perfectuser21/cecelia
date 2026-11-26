@@ -60,7 +60,7 @@ describe('resolveDispatchRoute：按 executor 分支顺序判真实路由', () =
   it('tick 不派的类型 → own-consumer（由专属消费方领单）', () => {
     expect(route('device_job')).toMatchObject({ route: 'own-consumer', available: true });
     expect(route('skill_factory_run')).toMatchObject({ route: 'own-consumer', available: true });
-    expect(route('coding_workflow')).toMatchObject({ route: 'own-consumer', available: true });
+    expect(route('coding_workflow')).toMatchObject({ route: 'retired-development', available: false });
   });
 
   it('动态配置把 us 类型改到 xian / executor=codex → 有执行者', () => {
@@ -105,7 +105,7 @@ describe('新类型：技能工厂执行单 / 编码 workflow 独立 task_type',
 
   it('coding_workflow：tick 不派、执行体 coding-workflow-runner、外部看门狗、workflow kind', () => {
     const e = getTaskType('coding_workflow');
-    expect(e).toMatchObject({ db: true, tick_dispatchable: false, executor: 'coding-workflow-runner', watchdog: 'external-worker', kind: 'workflow' });
+    expect(e).toBeNull();
     expect(TICK_DISPATCH_EXCLUDED).toContain('coding_workflow');
   });
 });
@@ -140,11 +140,11 @@ describe('normalizeBorrowedTaskType：借壳类型归一', () => {
     expect(normalizeBorrowedTaskType('research', { factory_dispatch: true })).toBe('skill_factory_run');
   });
   it('data + coding_workflow=true → coding_workflow', () => {
-    expect(normalizeBorrowedTaskType('data', { coding_workflow: true })).toBe('coding_workflow');
+    expect(() => normalizeBorrowedTaskType('data', { coding_workflow: true })).toThrow('task_type_retired');
   });
   it('其余原样（包括开关为字符串的非标准写法）', () => {
     expect(normalizeBorrowedTaskType('research', {})).toBe('research');
-    expect(normalizeBorrowedTaskType('data', { coding_workflow: 'true' })).toBe('data');
+    expect(() => normalizeBorrowedTaskType('data', { coding_workflow: 'true' })).toThrow('task_type_retired');
     expect(normalizeBorrowedTaskType('dev', { factory_dispatch: true })).toBe('dev');
   });
 });

@@ -6,7 +6,7 @@
 
 禁止新建、重启与延迟重派 kernel：Brain relay/run API、Fleet orchestrator prepare/start、直接 CLI 均返回 `kernel_runtime_retired`。无环境变量可重新启用。历史 load/patch/finalize/reconcile 与 Fleet inspect/terminal 保留，不杀在途进程、不释放未知资源。
 
-现行业务使用公共 Runner 的固定 workflow/profile + Commander。编码走 `coding_workflow`。`golden_path_proposal` 尚缺受保护 profile 与验收合同的迁移绑定，因此明确拒绝新派发；不能把退役视为业务已迁移。Fleet attempt transport 仍服务公共 Runner 原子执行，未被退役。
+现行业务使用公共 Runner 的固定 workflow/profile + Commander。用户编码交普通 `codex_dev` Agent 或有头 `dev` 会话；旧自主 `coding_workflow` 已退役。`golden_path_proposal` 尚缺受保护 profile 与验收合同的迁移绑定，因此明确拒绝新派发；不能把退役视为业务已迁移。Fleet attempt transport 仍服务公共 Runner 原子执行，未被退役。
 
 以下为历史实现参考，不是现行启动操作手册。
 

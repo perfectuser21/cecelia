@@ -97,7 +97,7 @@ describe('GET /health runtime isolation', () => {
     expect(body.organs.circuit_breaker).toMatchObject({ status: 'has_open', open: ['model'] });
   });
 
-  it.each(['coding_workflow', 'code_review'])('reports DB failure in %s as an error in isolation', async taskType => {
+  it.each(['codex_dev', 'code_review'])('reports DB failure in %s as an error in isolation', async taskType => {
     const h = harness();
     const healthyQuery = h.pool.query.getMockImplementation();
     h.pool.query.mockImplementation((sql, args) => args?.[0]?.includes(taskType)
@@ -108,6 +108,7 @@ describe('GET /health runtime isolation', () => {
     expect(body).toMatchObject({ status: 'error', error: 'database unavailable', runtime: { isolated: true, background_automation: false } });
     expect(h.dockerRuntimeProbe).not.toHaveBeenCalled();
     expect(h.checkXianBridgeHealth).not.toHaveBeenCalled();
+    expect(h.describeFleetTransportReadiness).not.toHaveBeenCalled();
   });
 
   it('production with a stopped tick remains degraded and runs external probes', async () => {

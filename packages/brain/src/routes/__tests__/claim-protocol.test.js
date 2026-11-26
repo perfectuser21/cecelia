@@ -220,6 +220,7 @@ describe('B. task-tasks.js POST /:id/claim: executor_kind 写入', () => {
   });
 
   it('claim 不传 executor_kind → 默认写 headed-session', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-2', task_type: 'data', payload: {} }] });
     mockPool.query.mockResolvedValueOnce({
       rows: [{ id: 'task-2', claimed_by: 'agent-1', claimed_at: new Date().toISOString() }],
     });
@@ -227,12 +228,21 @@ describe('B. task-tasks.js POST /:id/claim: executor_kind 写入', () => {
       .post('/tasks/task-2/claim')
       .send({ claimer: 'agent-1' });
     expect(res.status).toBe(200);
-    const [sql, params] = mockPool.query.mock.calls[0];
+    const [sql, params] = mockPool.query.mock.calls.find(([query]) => /UPDATE tasks/.test(query));
     expect(sql).toMatch(/executor_kind/);
     expect(params).toContain('headed-session');
   });
 
+  it('锁内预读识别旧自主任务，返回410且不得写claim或租约', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'retired', task_type: 'coding_workflow', payload: {} }] });
+    const res = await request(app).post('/tasks/retired/claim').send({ claimer: 'agent', lease_seconds: 120 });
+    expect(res.status).toBe(410);
+    expect(res.body.error).toBe('task_type_retired');
+    expect(mockPool.query.mock.calls.some(([sql]) => /UPDATE tasks|INSERT INTO task_leases/.test(sql))).toBe(false);
+  });
+
   it('claim 传入 executor_kind=bridge → 写 bridge', async () => {
+    mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'task-3', task_type: 'data', payload: {} }] });
     mockPool.query.mockResolvedValueOnce({
       rows: [{ id: 'task-3', claimed_by: 'bridge-1', claimed_at: new Date().toISOString() }],
     });
@@ -240,7 +250,7 @@ describe('B. task-tasks.js POST /:id/claim: executor_kind 写入', () => {
       .post('/tasks/task-3/claim')
       .send({ claimer: 'bridge-1', executor_kind: 'bridge' });
     expect(res.status).toBe(200);
-    const [sql, params] = mockPool.query.mock.calls[0];
+    const [sql, params] = mockPool.query.mock.calls.find(([query]) => /UPDATE tasks/.test(query));
     expect(sql).toMatch(/executor_kind/);
     expect(params).toContain('bridge');
   });
@@ -263,6 +273,7 @@ describe('B2. POST /:id/claim 带 lease_seconds（统一领单租约，任务 c5
   it('lease_seconds → 认领后落租约行，响应带 lease_until', async () => {
     const until = new Date(Date.now() + 120_000).toISOString();
     mockPool.query
+      .mockResolvedValueOnce({ rows: [{ id: 'task-9', task_type: 'research', payload: {} }] })
       .mockResolvedValueOnce({ rows: [{ id: 'task-9', claimed_by: 'fd', claimed_at: new Date().toISOString(), executor_kind: 'openclaw-agent' }] })
       .mockResolvedValueOnce({ rows: [{ lease_until: until, lease_seconds: 120, on_expire: 'auto' }] })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 });
@@ -273,7 +284,10 @@ describe('B2. POST /:id/claim 带 lease_seconds（统一领单租约，任务 c5
     expect(res.body.lease_until).toBe(until);
     const lease = mockPool.query.mock.calls.find(([sql]) => /INSERT INTO task_leases/.test(sql));
     expect(lease).toBeTruthy();
-    expect(lease[1]).toContain(120);
+    expect(lease[1]).toEqual(['task-9', 'fd', 'claim', 'auto', 120]);
+    expect(res.body).toMatchObject({ id: 'task-9', claimed_by: 'fd', executor_kind: 'openclaw-agent', lease_seconds: 120, on_lease_expire: 'auto' });
+    const renewal = mockPool.query.mock.calls.find(([sql]) => /UPDATE device_locks SET expires_at/.test(sql));
+    expect(renewal?.[1]).toEqual(['task-9', until]);
   });
 
   it('非法 on_lease_expire → 400，不认领', async () => {

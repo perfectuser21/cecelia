@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { productionMatchers } from './qa-report.mjs';
+import { productionMatchers } from './production-targets.mjs';
 import { writePreviewBrowserHelper } from './preview-browser.mjs';
 
 const active = new WeakSet();

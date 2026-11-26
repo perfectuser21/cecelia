@@ -385,8 +385,8 @@ describe('Golden Path contract signature and Harness launch', () => {
     expect(db.tasks).toHaveLength(1);
   });
 
-  // ── A2：签字实现单改投 coding_workflow runner（任务 eb9094ee）──────────────────
-  it('A2：签字后的实现单是 coding_workflow（runner 认领），不再落无头 harness_initiative', async () => {
+  // 签字只登记有头开发待办；旧自主记录保持历史幂等可读。
+  it('签字后的实现单仅登记有头dev，不启动自主开发', async () => {
     const db = signingDb();
 
     await signAndLaunchGoldenPathContract(db, {
@@ -398,12 +398,13 @@ describe('Golden Path contract signature and Harness launch', () => {
     });
 
     expect(db.tasks).toHaveLength(1);
-    expect(db.tasks[0].task_type).toBe('coding_workflow');
-    expect(db.tasks[0].payload).toMatchObject({ coding_workflow: true, repo: 'cecelia', gp_contract_id: 'contract-1' });
-    expect(db.tasks[0].payload.headed_manual).toBeUndefined();
+    expect(db.tasks[0].task_type).toBe('dev');
+    expect(db.tasks[0].payload).toMatchObject({ headed_manual: 'true', repo: 'cecelia', gp_contract_id: 'contract-1' });
+    expect(db.tasks[0].payload).not.toHaveProperty('coding_workflow');
+    expect(db.tasks[0].payload.headed_manual).toBe('true');
   });
 
-  it('A2：runner 不支持的仓库 → 签字照常成功，实现单降为有头待办（harness_initiative + headed_manual）', async () => {
+  it('其他仓库签字仍登记有头dev待办', async () => {
     const db = signingDb({ mapRepo: 'zenithjoy-miniapp' });
 
     await signAndLaunchGoldenPathContract(db, {

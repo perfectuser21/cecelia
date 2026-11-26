@@ -5,9 +5,9 @@ describe('unified work router', () => {
   it('maps all four change kinds forward', () => {
     expect(CHANGE_KINDS).toEqual(['new_capability', 'capability_change', 'bugfix', 'parameter_only']);
     for (const change_kind of CHANGE_KINDS) {
-      // 无头交Runner，有头开发记账使用通用dev类型。
+      // 用户请求交普通Agent，有头开发记账使用通用dev类型。
       expect(selectPipeline({ work_kind: 'coding_mutation', change_kind })).toMatchObject({
-        pipeline: 'coding_workflow', canonical_task_type: 'coding_workflow', change_kind,
+        pipeline: 'agent_development', canonical_task_type: 'codex_dev', change_kind,
       });
       expect(selectPipeline({ work_kind: 'coding_mutation', change_kind, headed: true })).toMatchObject({
         pipeline: 'headed_development', canonical_task_type: 'dev', orchestrator: 'headed-session', change_kind,
@@ -94,7 +94,7 @@ describe('unified work router', () => {
       repo_hint: 'cecelia', map_scope_hint: ['F4'],
       decided_at: '2026-08-13T00:00:00.000Z',
     }, [{ repo: 'cecelia' }])).toMatchObject({
-      work_kind: 'coding_mutation', canonical_task_type: 'coding_workflow',
+      work_kind: 'coding_mutation', canonical_task_type: 'codex_dev',
     });
   });
 });

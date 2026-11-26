@@ -1,21 +1,14 @@
-/** 当前编码类型与CI固定历史checkout能力的实际保护。 */
-import { describe, it, expect } from 'vitest';
+/** CI固定历史checkout能力的实际保护。 */
+import { it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import yaml from 'js-yaml';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { CODING_MUTATION_TASK_TYPES } from '../lib/task-type-registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BRAIN_DIR = join(HERE, '..', '..'); // packages/brain
-
-describe('当前编码注册表语义', () => {
-  it('coding_workflow 必须保留编码变更语义', () => {
-    expect(CODING_MUTATION_TASK_TYPES).toContain('coding_workflow');
-  });
-});
 
 // 用真实本地Git历史验证actions/checkout的实际depth参数。
 it('基础CI检查的checkout必须能读取固定历史基线',()=>{

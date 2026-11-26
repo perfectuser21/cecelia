@@ -45,10 +45,11 @@ function inspect(mode){
  const result=JSON.parse(receipt.slice('ONCE_RESULT='.length));inspectionCache.set(mode,result);return result;
 }
 
-test('PR固定18入口仍可选；汇总六叶在deep只由汇总登记一次',()=>{
+test('PR原PG入口与新增用户交办仍可选；汇总六叶在deep只登记一次',()=>{
  const {files}=inspect('glob');
  const pr=commandsFor('brain-integration').find(step=>step.ciScratchDatabase).args.filter(arg=>arg.endsWith('.test.js'));
- assert.equal(pr.length,18);
+ assert.equal(pr.length,19);
+ assert.equal(pr.filter(file=>file==='src/__tests__/integration/task-intake.pg.integration.test.js').length,1,'真实用户交办PG回归必须由必需CI执行一次');
  for(const file of pr)assert.ok(files.includes(root+'packages/brain/'+file),`PR不能丢合同 ${file}`);
  assert.equal(imports.length,6,'保留原六份叶合同');
  for(const file of imports)assert.ok(!files.includes(root+'packages/brain/'+file),`叶合同不得重复独立发现：${file}`);

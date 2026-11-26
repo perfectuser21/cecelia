@@ -99,7 +99,7 @@ export const REMAINING_LEGACY_SITES = {
   // task_type（不是全量），且值与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP 都不同（如
   // harness_initiative 这里写 'harness(skill-relay)'，两处已有映射表都是别的值）——是运行舱只读
   // 展示端点自己的第三份独立"推不出=null"降级展示文案，不是"哪类"的分类标签，无匹配注册表字段
-  'routes/agent-ops.js': ['22:SKILL_BY_TASK_TYPE'],
+  'routes/agent-ops.js': ['24:SKILL_BY_TASK_TYPE'],
   // kind: map（long-lived）— enum 部分（STAGE_ORDER/STAGE_LABELS）已搬进注册表 HARNESS_BUILD_STAGE_ORDER/LABELS；
   // 剩 TASK_TYPE_TO_SKILL（:933，task_type→skill目录名，与 SKILL_WHITELIST/EXECUTOR_SKILL_MAP
   // 语义相近但值不同——第3份独立维护，PR1 只搬家不合并）+ BASE_LABELS（:1021，task_type→短展示

@@ -1,11 +1,5 @@
 // 真实 CLI → HTTP route → Work Router → PG → GET：事务回滚，仅允许 scratch / CI test。
 import express from 'express';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import pool from '../../db.js';
 import router from '../../routes/task-tasks.js';
@@ -69,7 +63,6 @@ describe('coding workflow 真实建单闭环', () => {
     }
     const client = await pool.connect();
     const originalQuery = pool.query, originalConnect = pool.connect;
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-intake-pg-'));
     let server;
     try {
       await client.query('BEGIN');
@@ -92,34 +85,27 @@ describe('coding workflow 真实建单闭环', () => {
       await new Promise((r) => server.once('listening', r));
       const base = `http://127.0.0.1:${server.address().port}`;
       const title = `cw-intake-pg-${crypto.randomUUID()}`;
-      const file = path.join(dir, 'plan.json');
-      const baseSha = (await promisify(execFile)('git', ['rev-parse', '--verify', 'origin/main^{commit}'], {
-        cwd: fileURLToPath(new URL('../../../', import.meta.url)),
-      })).stdout.trim();
-      expect(baseSha).toMatch(/^[a-f0-9]{40}$/);
-      fs.writeFileSync(file, JSON.stringify({ title, base_sha: baseSha, change_kind: 'bugfix', map_scope_hint: ['F1'], acceptance: ['路由正确入账'] }));
-      const out = await promisify(execFile)(process.execPath, ['scripts/coding-workflow/new-task.mjs', file], {
-        cwd: fileURLToPath(new URL('../../../', import.meta.url)), env: { ...process.env, BRAIN_URL: base },
-      });
-      expect(postedBodies[0].base_sha).toBe(baseSha);
-      const id = JSON.parse(out.stdout)[0].id;
+      const baseSha = 'a'.repeat(40);
+      const response = await fetch(`${base}/api/brain/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, task_type: 'dev', mutation_intent: 'write', change_kind: 'bugfix', repo_hint: 'cecelia', map_scope_hint: ['F1'], branch: 'cp-agent-intake', base_sha: baseSha }) });
+      expect(response.status).toBe(201);
+      const id = (await response.json()).id;
       const got = await (await fetch(`${base}/api/brain/tasks/${id}`)).json();
       const task = got.task ?? got;
-      expect(task.task_type).toBe('coding_workflow');
+      expect(task.task_type).toBe('codex_dev');
       expect(task.payload).toMatchObject({ repo: 'cecelia', work_kind: 'coding_mutation', change_kind: 'bugfix',
-        orchestrator: 'coding-workflow-runner', map_scope: ['F1'], base_sha: baseSha });
+        orchestrator: 'codex-bridge', base_repo: 'perfectuser21/cecelia', map_scope: ['F1'], base_sha: baseSha });
       const receipt = (await client.query(`SELECT work_kind,repo,pipeline,evidence->>'base_sha' AS base_sha FROM work_routing_receipts WHERE task_id=$1`, [id])).rows;
-      expect(receipt).toEqual([{ work_kind: 'coding_mutation', repo: 'cecelia', pipeline: 'coding_workflow', base_sha: baseSha }]);
+      expect(receipt).toEqual([{ work_kind: 'coding_mutation', repo: 'cecelia', pipeline: 'agent_development', base_sha: baseSha }]);
       const bad = await fetch(`${base}/api/brain/tasks`, { method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ title: title + '-missing', task_type: 'coding_workflow', payload: { coding_workflow: true, repo: 'cecelia' } }) });
-      expect(bad.status).toBe(400);
-      expect((await bad.json()).error).toBe('change_kind_required');
+      expect(bad.status).toBe(410);
+      expect((await bad.json()).error).toBe('task_type_retired');
       expect((await client.query('SELECT id FROM tasks WHERE title=$1', [title + '-missing'])).rows).toEqual([]);
     } finally {
       if (server) await new Promise((r) => server.close(r));
       pool.query = originalQuery; pool.connect = originalConnect;
       await client.query('ROLLBACK'); client.release();
-      fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 30000);
 });
