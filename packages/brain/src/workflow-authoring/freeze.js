@@ -14,7 +14,7 @@ const fail=(message,code='definition_freeze_proof_invalid')=>{throw Object.assig
 export async function prepareDefinitionFreeze(definition, options={}) {
   const source={repo:definition.source?.repo,path:definition.source?.ref,revision:definition.source?.revision};
   validateGitSource(source);
-  options={...options,gitSession:createFixedGitReadSession()};
+  options={...options,gitSession:options.gitSession??createFixedGitReadSession()};
   const deadline=Math.min(options.deadline??Infinity,Date.now()+60000);
   const readFile=options.readFile||((s)=>readFixedGitFile(s,{...options,deadline})),cache=new Map();
   let totalBytes=0,bindingFiles=0;

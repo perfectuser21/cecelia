@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { prepareDefinitionFreeze, assertPreparedFreeze } from './freeze.js';
+import { createFixedGitReadSession } from './fixed-git-source.js';
 import { validateRequest } from './contracts.js';
 import { createHash } from 'node:crypto';
 
@@ -123,6 +124,30 @@ describe('共享中央 Skill 与来源读取总预算回归',()=>{
     });
     await expect(prepareDefinitionFreeze(d,{readFile,signal:controller.signal})).rejects.toThrow();
     expect(readFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('多个路径复用同一个Git blob时冻结仍按每份文件计入字节预算',async()=>{
+    const d=definition(),tree='b'.repeat(40),rows=new Map();
+    const content='a'.repeat(1024*1024);
+    const blob=text=>{
+      const bytes=Buffer.from(text);
+      const sha=createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+      return {sha,size:bytes.length,encoding:'base64',content:bytes.toString('base64')};
+    };
+    const code=blob(content);
+    d.activities[0].implementation_bindings=Array.from({length:7},(_,i)=>({kind:'code',repo,revision,path:`src/repeated-${i}.js`}));
+    for(const path of ['src/read.js',...d.activities[0].implementation_bindings.map(b=>b.path)])rows.set(path,code);
+    rows.set(d.source.ref,blob(document(d)));
+    const fetchFn=vi.fn(async url=>{
+      const kind=new URL(url).pathname.split('/').at(-2);
+      if(kind==='commits')return {ok:true,json:async()=>({sha:revision,tree:{sha:tree}})};
+      if(kind==='trees')return {ok:true,json:async()=>({sha:tree,tree:[...rows].map(([path,b])=>({path,type:'blob',mode:'100644',sha:b.sha,size:b.size}))})};
+      const selected=[...rows.values()].find(b=>url.endsWith(b.sha));
+      return {ok:true,json:async()=>selected};
+    });
+    const gitSession=createFixedGitReadSession({reuseBlobs:true});
+    await expect(prepareDefinitionFreeze(d,{fetchFn,gitSession,resolveToken:async()=> 'fixture'})).rejects.toThrow(/总字节/);
+    expect(fetchFn.mock.calls.filter(([url])=>url.endsWith(code.sha))).toHaveLength(1);
   });
 });
 
