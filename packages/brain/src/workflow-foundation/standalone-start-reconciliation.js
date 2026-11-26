@@ -113,9 +113,9 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
-    const preflight = cleanup?.preflightProof;
-    if (preflight) {
-      const snapshot=preflight.snapshot;
+    const preflight = cleanup?.preflightProof, account = cleanup?.accountProof;
+    const snapshot = (preflight ?? account)?.snapshot;
+    if (snapshot) {
       check(snapshot.company_id===scope.company.company_id && snapshot.tenant_id===scope.company.tenant_id
         && snapshot.version===scope.company.version && snapshot.line_key===scope.line);
     }
@@ -181,7 +181,9 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code,
       ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}),
       ...(cleanup?.ledgerSha256 ? { cleanup_ledger_sha256:cleanup.ledgerSha256 } : {}),
-      ...(preflight ? { preflight_timeout_sha256:preflight.sha256, company_snapshot:preflight.snapshot } : {}),
+      ...(preflight ? { preflight_timeout_sha256:preflight.sha256 } : {}),
+      ...(account ? { account_foreground_refusal_sha256:account.sha256 } : {}),
+      ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup ? { cleanup_diagnostic_sha256:cleanup.sha256, observed_central_lease_version:cleanup.leaseVersion,
         central_release_performed:releaseCentral } : {}) };
     const finished = await finishRun({runId,status:'failed',error:failureReason,result:{standalone_start_review:settlement}},
