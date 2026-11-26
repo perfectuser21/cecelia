@@ -18,7 +18,6 @@ vi.mock('../../routes/shared.js', () => ({
   getActivePolicy: vi.fn(), getWorkingMemory: vi.fn(), getTopTasks: mockGetTopTasks,
   getRecentDecisions: vi.fn(), IDEMPOTENCY_TTL: 0, ALLOWED_ACTIONS: [],
 }));
-vi.mock('../../nightly-orchestrator.js', () => ({ getNightlyOrchestratorStatus: vi.fn() }));
 vi.mock('../../websocket.js', () => ({ default: {}, WS_EVENTS: {} }));
 
 let app;

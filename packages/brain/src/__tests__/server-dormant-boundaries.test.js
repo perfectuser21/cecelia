@@ -72,7 +72,7 @@ describe('真实Brain启动装配的退役边界', () => {
     for (const [path, module] of expected) expect(model.mounts.some(m => m.path === path && m.handlers.includes(module)), `${path} 必须绑定 ${module}`).toBe(true);
   });
   it('保留任务恢复、意识loop、Notion同步与必要健康诊断与既有队列调度', () => {
-    for (const name of ['initTickLoop', 'initConsciousnessGuard', 'runStartupRecovery', 'reAttachActiveExecutors', 'syncOrphanTasksOnStartup', 'cleanupStaleClaims', 'scheduleLegacyNotionPush', 'startProjectionJobsLoop', 'createAttemptCleanupLoop', 'startProbeLoop', 'scanEvolutionIfNeeded', 'startNightlyOrchestratorScheduler']) {
+    for (const name of ['initTickLoop', 'initConsciousnessGuard', 'runStartupRecovery', 'reAttachActiveExecutors', 'syncOrphanTasksOnStartup', 'cleanupStaleClaims', 'scheduleLegacyNotionPush', 'startProjectionJobsLoop', 'createAttemptCleanupLoop', 'startProbeLoop', 'scanEvolutionIfNeeded']) {
       expect(model.calls.some(call => call.name === name && call.module), `${name} 必须调用实际导入绑定`).toBe(true);
     }
   });
@@ -91,4 +91,54 @@ describe('真实Brain启动装配的退役边界', () => {
     expect(violations(sample)).toContain('called:./src/dopamine.js');
     expect(violations(sample)).toContain('mounted:/api/brain/acceptance');
   });
+});
+
+it('执行真实非隔离启动函数时只接线现役调度，不启动旧夜间写标记器', async () => {
+  const entry = parse(source, {ecmaVersion: 'latest', sourceType: 'module'}).body
+    .find(node => node.type === 'FunctionDeclaration' && node.id.name === 'onBrainListening');
+  // 只替换动态import的传输边界，真实启动控制流直接执行；时钟与全部外部模块为隔离依赖。
+  let body = source.slice(entry.body.start + 1, entry.body.end - 1);
+  const calls = [], timers = [], loads = [];
+  let nightlyStarts = 0;
+  const imports = [];
+  function collect(node) {
+    if (!node || typeof node !== 'object') return;
+    if (node.type === 'ImportExpression') imports.push(node);
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) value.forEach(collect);
+      else if (value && typeof value === 'object') collect(value);
+    }
+  }
+  collect(entry.body);
+  for (const node of imports.sort((a, b) => b.start - a.start)) {
+    const start = node.start - entry.body.start - 1, end = node.end - entry.body.start - 1;
+    body = body.slice(0, start) + `load(${source.slice(node.source.start, node.source.end)})` + body.slice(end);
+  }
+  const owned = name => (...args) => { calls.push(name); return undefined; };
+  const modules = new Proxy({}, {get: (_target, name) => {
+    if (name === 'then') return undefined;
+    if (name === 'startNightlyOrchestratorScheduler') return () => {nightlyStarts++;};
+    if (name === 'reAttachActiveExecutors') return async () => ({reattached: 0, touched: 0, errors: []});
+    if (name === 'syncOrphanTasksOnStartup') return async () => ({});
+    if (name === 'cleanupStaleClaims') return async () => ({cleaned: 0, errors: []});
+    return owned(name);
+  }});
+  const environment = {
+    PORT: 0, server: {}, pool: {}, process: {env: {}, execPath: '/isolated/node'}, __dirname: '/isolated',
+    console: {log(){}, warn(){}, error(){}},
+    isIsolatedRuntime: () => false, shouldStartAttemptCleanupLoop: () => false, isConsciousnessEnabled: () => false,
+    initWebSocketServer: owned('websocket'), startFleetRefresh: owned('fleet'), initTickLoop: owned('tick'),
+    setTimeout: (_fn, ms) => {timers.push(ms); return 1;}, setInterval: (_fn, ms) => {timers.push(ms); return 1;},
+    join: (...parts) => parts.join('/'),
+    spawn: owned('spawn'),
+    load: async path => {loads.push(path); return modules;},
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  await new AsyncFunction(...Object.keys(environment), body)(...Object.values(environment));
+  expect(nightlyStarts).toBe(0);
+  expect(calls).toContain('tick');
+  expect(calls).toContain('scheduleLegacyNotionPush');
+  expect(calls).toContain('startProjectionJobsLoop');
+  expect(loads).toContain('./src/executor.js');
+  expect(timers.length).toBeGreaterThan(0);
 });

@@ -28,9 +28,6 @@ vi.mock('./shared.js', () => ({
   IDEMPOTENCY_TTL: 300000,
   ALLOWED_ACTIONS: {},
 }));
-vi.mock('../nightly-orchestrator.js', () => ({
-  getNightlyOrchestratorStatus: vi.fn().mockReturnValue({}),
-}));
 vi.mock('../websocket.js', () => ({
   default: { wss: null, getClientCount: vi.fn().mockReturnValue(0), broadcast: vi.fn() },
 }));

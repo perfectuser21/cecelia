@@ -38,9 +38,7 @@ const SYS = 'system_no_prd';         // pre-flight SYSTEM_TASK_TYPES
 const ANC = 'anchor_exempt';         // anchor-check ANCHOR_EXEMPT_TASK_TYPES
 const ESC = 'escalation_exempt';     // escalation pauseLowPriority 内联 NOT IN（:364-379）
 const CX = 'cancel_exempt';          // escalation export CANCEL_EXEMPT_TYPES（:73-83，比 ESC 多 research/suggestion_plan/content_publish）
-const NIT = 'nightly_excluded';      // nightly-orchestrator NOT IN
 const MON = 'monitor_long_running';  // monitor-loop HARNESS_TASK_TYPES
-const NKR = 'nightly_kr_bonus';      // nightly-orchestrator.js:122 scoreTask typeScore（KR 对齐加分名单）
 const GPSCOPE = 'gp_scope_task_types';
 const DEVDASH = 'dev_dashboard_query';  // routes/execution.js:3721 GET /api/brain/dev/tasks 查询名单 ['dev','review']
 const GPIMPL = 'gp_implementation';  // golden-path-contracts 现役签字实现单类型：有头dev
@@ -82,22 +80,22 @@ export function assertActiveDevelopmentTask(task) {
 
 export const TASK_TYPE_REGISTRY = Object.freeze({
   'content-pipeline': workflow(T('external', false, false, 'external-worker', 'external-worker', true, false, 'none', true, [V, ANC])),
-  dev:                 T('none', true,  true,  'headed-session', 'none', true, true, 'none', true, [V, BP, GUIDE, CM, FK, RECMUT, NKR, GPSCOPE, DEVDASH, WARROOM, GPIMPL]),
-  review:              T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR, DEVDASH]),
+  dev:                 T('none', true,  true,  'headed-session', 'none', true, true, 'none', true, [V, BP, GUIDE, CM, FK, RECMUT, GPSCOPE, DEVDASH, WARROOM, GPIMPL]),
+  review:              T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, DEVDASH]),
   talk:                T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR]),
   data:                T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC]),
   research:            T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR, CX, NOGOAL, ASYNCCB]),
   exploratory:         T('none', false, false, null, 'none', true, false, 'none', true, []),
   explore:             T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, ANC, FR, ASYNCCB]),
   knowledge:           T('codex-bridge', false, false, null, 'none', true, true, 'none', true, [V, FR]),
-  qa:                  T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, NKR]),
+  qa:                  T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
   audit:               T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
   decomp_review:       T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV, REVIEWISO]),
   codex_qa:            T('codex-review', false, false, null, 'kernel', true, true, 'recurring', true, [V, SYS, ANC, CODEX, FV, RECUR]),
   codex_dev:           T('codex-bridge', true,  true,  null, 'kernel', true, true, 'none', true, [V, ANC, CODEX, CM, FK, RECMUT]),
   codex_test_gen:      T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, ANC, CODEX, FV]),
   pr_review:           T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, FV]),
-  code_review:         T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO, NKR]),
+  code_review:         T('codex-review', false, false, null, 'kernel', true, true, 'none', true, [V, SYS, ANC, FV, REVIEWISO]),
   initiative_plan:     T('none', false, false, null, 'none', true, true, 'protected', true, [V, SYS, ANC, FR, PROT, REVIEWISO]),
   initiative_verify:   T('codex-review', false, false, null, 'none', true, true, 'protected', true, [V, SYS, ANC, FV, PROT, REVIEWISO]),
   initiative_execute:  T('none', true,  true,  null, 'kernel', true, true, 'none', true, [V, CM, FK, RECMUT]),
@@ -188,8 +186,6 @@ export const PUSH_EXCLUDED_TASK_TYPES = Object.freeze(
 export const ANCHOR_EXEMPT_TASK_TYPES = tagged(ANC);
 export const MONITOR_LONG_RUNNING_TASK_TYPES = tagged(MON);
 
-export const NIGHTLY_KR_BONUS_TASK_TYPES = tagged(NKR);
-
 export const GP_SCOPE_TASK_TYPES = tagged(GPSCOPE);
 
 export const GP_IMPLEMENTATION_TASK_TYPES = tagged(GPIMPL);
@@ -221,7 +217,6 @@ export const PROTECTED_TASK_TYPES = tagged(PROT);
 export const ESCALATION_EXEMPT_TASK_TYPES = tagged(ESC);
 export const CANCEL_EXEMPT_TYPES = tagged(CX);
 export const AUTH_RECOVERY_SKIP_TASK_TYPES = tagged(AUTHSKIP);
-export const NIGHTLY_EXCLUDED_TASK_TYPES = tagged(NIT);
 
 export const EXTERNAL_WATCHDOG_TASK_TYPES = Object.freeze(
   Object.entries(TASK_TYPE_REGISTRY).filter(([, e]) => e.watchdog === 'external-worker').map(([k]) => k),
