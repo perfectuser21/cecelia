@@ -7,7 +7,7 @@ import {pathToFileURL} from 'node:url';
 import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {createStore} from './brain-image-retention/storage.mjs';
-import {assertReleaseOrder} from './brain-image-retention/release-order.mjs';
+import {assertReleaseOrder,RELEASE_ORDER_LOCK_WAIT_MS} from './brain-image-retention/release-order.mjs';
 import {US_MACHINE_ID} from './brain-image-retention/policy.mjs';
 const storage=pathToFileURL(join(import.meta.dirname,'brain-image-retention/storage.mjs')).href;
 async function fixture(t){
@@ -79,4 +79,11 @@ for(const signal of ['SIGTERM','SIGINT'])test(`真实CLI ${signal}取消等待�
  await assert.rejects(f.store.withLock(()=>assert.fail('holder lost lock')),{code:'IMAGE_RETENTION_BUSY'});
  holder.send('release');await holder.done;await f.store.withLock(lease=>lease.assertHeld());
  assert.equal((await stat(join(f.root,'operation.lock'))).ino,lockBefore.ino);
+});
+
+test('生产预算固定且不接受扩大预算；真实不可信store错误原样拒绝',async t=>{
+ const f=await fixture(t);assert.equal(RELEASE_ORDER_LOCK_WAIT_MS,120000);
+ await assert.rejects(assertReleaseOrder({repo:f.root,target:f.b,runtime:f.runtime,lockWaitMs:Infinity}),{code:'DEPLOY_ORDER_UNKNOWN'});
+ await f.store.withLock(lease=>lease.assertHeld());await chmod(join(f.root,'operation.lock'),0o644);
+ await assert.rejects(assertReleaseOrder({repo:f.root,target:f.b,runtime:f.runtime}),{code:'UNTRUSTED_LOCK'});assert.equal(f.snapshots,0);
 });
