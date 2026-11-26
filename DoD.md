@@ -1,20 +1,12 @@
-# CI运行基线与休眠前端检查统一收口
+# 轻盈底座本机 RPC 使用已验证的 Brain 地址
 
-Task: 7ce6c42d-b747-4831-85c3-2111ba886d54
+Task: b9a889dc-afd9-43bb-b50f-59407c5dad49
 GP-Anchor: none(infra)
 
-- [x] PG接管测试用独立observer与精确owner阻塞身份观测，原11例与异常收束保护保留；同源真实PG22文件248例通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs brain-integration
-- [x] Docker两阶段Node22与主CI一致，image build后保完整四旧步骤并增加真实容器major断言，错误major拒绝。
-  Test: manual:node --test scripts/ci/__tests__/basic-image-runtime.test.mjs scripts/ci/__tests__/basic-fixed-core.test.mjs
-- [x] 默认CI精确7定义18实例，四必需组严格成功才过；前端API、显式CLI、captures schema、Heartbeat与Nightly保留。
-  Test: manual:node --test scripts/ci/__tests__/basic-parked-frontend.test.mjs scripts/ci/__tests__/basic-results.test.mjs scripts/ci/__tests__/basic-manual-ui-lane.test.mjs
-- [x] 仅release-order取operation lock有限等待，其他store默认-n不改；超时/错误/信号闭锁且原顺序拒绝保持。
-  Test: manual:node --test scripts/brain-image-retention-release-order.test.mjs scripts/ci/__tests__/basic-deploy-ordering.test.mjs
-- [ ] 统一版本325、事实/DoD、完整Scripts与Ops、集成diff独立审查及真实PR镜像Node22门通过。
-  Test: manual:node scripts/ci/run-basic-check.mjs scripts
-- [ ] 本次actual main CD成功且生产Brain真实Node22验真；Root接续采证前父Task保持in_progress，源码合并不等同生产完成。
-  Test: manual:node scripts/ci/run-basic-check.mjs image
+- [x] CLI 从私有配置读取本机 Brain 地址，调度、独立 Skill provider 和冻结 native RPC 使用同一地址。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/worker.test.mjs scripts/standalone-skill/native-discovery.test.mjs
+- [x] 业务地址只传受信本机 provider，模型子进程仍使用现行白名单和认证。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/native-discovery.test.mjs
 
 ## 悦升 101 末次清理握手复核
 

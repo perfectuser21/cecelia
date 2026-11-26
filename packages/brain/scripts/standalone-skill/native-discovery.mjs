@@ -59,7 +59,7 @@ async function loadFrozenRuntime(directory, snapshot, profile) {
   return {start:native.startStandaloneSkillRuntime,call:ipc.callStandaloneSkillTool};
 }
 
-export async function createDiscoveryServices(job, {profile, skillPath, stateRoot, phoneEnv={}, codex, toolkit}, {post, runModel} = {}) {
+export async function createDiscoveryServices(job, {profile, skillPath, stateRoot, phoneEnv={}, codex, toolkit, brainUrl}, {post, runModel} = {}) {
   const domain = profile?.domain_adapter;
   const cfg = domain?.config;
   const source = cfg?.snapshot;
@@ -148,7 +148,7 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
       const reply = await post('workflow-foundation/standalone/attest',{machine_id:job.machine_id,identity:attestation});
       if (reply.attested !== true) throw Error('standalone_attestation_unconfirmed');
       const runtime=await loadFrozenRuntime(dir,snapshot,profile);
-      nativeHost=await runtime.start({runDirectory:dir,environment:{...prepared.env,...phoneEnv}});
+      nativeHost=await runtime.start({runDirectory:dir,environment:{...prepared.env,...phoneEnv,BRAIN_URL:brainUrl}});
       callStandaloneSkillTool=runtime.call;
       return nativeHost;
     },
@@ -204,7 +204,7 @@ export async function createDiscoveryServices(job, {profile, skillPath, stateRoo
   };
 }
 
-export async function createProvider(job, options) {
+export async function createProvider(job, options, {brainUrl='http://127.0.0.1:5221'} = {}) {
   if (!process.env.CECELIA_INTERNAL_TOKEN || process.env.BRAIN_INTERNAL_TOKEN !== process.env.CECELIA_INTERNAL_TOKEN) {
     throw Error('standalone_provider_brain_credentials_unavailable');
   }
@@ -220,9 +220,9 @@ export async function createProvider(job, options) {
   verifyToolkitFiles(root,profile.files);
   const toolkit = Object.assign({}, ...await Promise.all(preparationModules.map(name=>import(pathToFileURL(join(root,name)).href))));
   return createDiscoveryServices(job,{profile,skillPath:binding.skill_path,stateRoot:options.state_root,
-    phoneEnv:binding.phone_env,codex:options.codex,toolkit},{
+    phoneEnv:binding.phone_env,codex:options.codex,toolkit,brainUrl},{
     post:async (endpoint,body)=>{
-      const response=await fetch('http://127.0.0.1:5221/api/brain/'+endpoint,{
+      const response=await fetch(new URL('/api/brain/'+endpoint,brainUrl),{
         method:'POST',headers:{'content-type':'application/json','x-internal-token':process.env.CECELIA_INTERNAL_TOKEN},
         body:JSON.stringify(body),signal:AbortSignal.timeout(15000),redirect:'error',
       });
