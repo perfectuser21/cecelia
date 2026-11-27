@@ -34,13 +34,15 @@ async function addFoundationTaskSchema(db){
   ADD COLUMN IF NOT EXISTS created_by text,ADD COLUMN IF NOT EXISTS dept text,ADD COLUMN IF NOT EXISTS phase text,
   ADD COLUMN IF NOT EXISTS executor_kind text,ADD COLUMN IF NOT EXISTS parent_task_id uuid,ADD COLUMN IF NOT EXISTS sequence_no integer,
   ADD COLUMN IF NOT EXISTS kind text,ADD COLUMN IF NOT EXISTS tenant_id text,ADD COLUMN IF NOT EXISTS blocked_reason text,ADD COLUMN IF NOT EXISTS blocked_detail jsonb,
+  ADD COLUMN IF NOT EXISTS notion_props jsonb,
   ADD COLUMN IF NOT EXISTS result jsonb,ADD COLUMN IF NOT EXISTS claimed_by text,ADD COLUMN IF NOT EXISTS claimed_at timestamptz,
   ADD COLUMN IF NOT EXISTS status_history jsonb DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS error_message text,ADD COLUMN IF NOT EXISTS summary text,ADD COLUMN IF NOT EXISTS blocked_until timestamptz,ADD COLUMN IF NOT EXISTS notion_synced_at timestamptz,ADD COLUMN IF NOT EXISTS driver_heartbeat_at timestamptz`);
 }
 
 /** 隔离协议夹具：定义来源/CI报告是合成的，执行产物、PG、DBOS和宿主是真实的。 */
-export async function workflowFoundationDatabase({scenario='healthy',playbook,workflowKey,directInput,readonlyVerification=false}={}){
+export async function workflowFoundationDatabase({scenario='healthy',playbook,workflowKey,directInput,readonlyVerification=false,
+ verificationStep='verify_private_playback'}={}){
  const base=await releaseEvidenceDatabase(),f={...base,pool:base.db},root=fs.mkdtempSync(path.join(os.tmpdir(),'foundation-registration-'));
  const repo=readonlyVerification?'perfectuser21/zenithjoy-workspace':FOUNDATION_FIXTURE_REPO;
  const dbosSchema=`foundation_dbos_${randomUUID().replaceAll('-','')}`;
@@ -80,6 +82,10 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook,wo
    definition.runtime={skill_id:skill,entrypoint:'verify_existing'};
    definition.activities=[{...definition.activities[0],key:'verify_existing',
     implementation_bindings:Object.keys(sourceFiles).filter(name=>name!=='work.mjs').map(binding)}];
+   if(verificationStep)definition.activities[0].steps=[{
+    key:verificationStep,name:'读回私密作品的完整播放',order:1,
+    dod:{mode:'hard',readback:{type:'metric',key:'private_playback_verified',expect:{op:'==',value:1}}},
+   }];
   }
   const reader=async s=>{
    if(s.repo!==repo||s.revision!==FOUNDATION_FIXTURE_REVISION)throw Error('fixture_source_unknown');

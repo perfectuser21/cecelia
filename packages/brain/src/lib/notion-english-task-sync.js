@@ -18,7 +18,8 @@ export async function pushEnglishTask(token, task, request) {
   const feedback = ['queued', 'in_progress', 'blocked'].includes(task.status)
     ? task.notion_props?.qiumi_control_feedback : null;
   const foundationReason = task.result?.foundation_reconciliation ? task.error_message ?? task.blocked_detail?.reason : null;
-  const summary = [resultTextOf(task.result), task.result?.standalone_receipt?.reason ?? foundationReason, feedback].filter(Boolean).join('\n');
+  const verifiedRun = task.result?.bilibili_verification?.run_id;
+  const summary = [resultTextOf(task.result), verifiedRun && `运行编号 ${verifiedRun}`, task.result?.standalone_receipt?.reason ?? foundationReason, feedback].filter(Boolean).join('\n');
   const evidence = Array.isArray(receipt.evidence) ? receipt.evidence.map(item => typeof item === 'string' ? item : item?.ref).filter(ref => typeof ref === 'string') : [];
   await syncTaskProgress(token, task.en_page_id, {
     title: task.title, description: task.title, status,

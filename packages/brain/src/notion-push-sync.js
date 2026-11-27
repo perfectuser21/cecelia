@@ -1,4 +1,5 @@
 import { dispatchNotionLeadgen, ENGLISH_TASKS_DB, explicitLeadgenStages, inactiveLeadgenReason, resolveNotionLeadgenBinding } from './notion-leadgen-dispatch.js';
+import { BILIBILI_VERIFY_MARKER, dispatchNotionBilibili } from './notion-bilibili-dispatch.js';
 import { standaloneSourceList } from './workflow-foundation/standalone-source.js';
 import {syncTaskProgress,findCreatedTaskPage,TASK_PROGRESS_FIELDS} from './projection/task-progress.js';
 import {syncManagedBodyBlock} from './projection/workflow-body.js';
@@ -615,6 +616,35 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
 
   const en = parseEnPage(page);
   const stages = explicitLeadgenStages(desc);
+  if (desc.includes(BILIBILI_VERIFY_MARKER)) {
+    const env = opts.env ?? process.env;
+    try {
+      if (stages.length || en.zhId32) {
+        await writeStatusReceipt(token, page, desc, 'B 站未派发：每页只允许一条工作流，且须使用英文 Tasks 源页', 'Blocked');
+        return { taskId: null, kind: 'blocked' };
+      }
+      const at = (opts.now ?? (() => new Date()))();
+      const end = toEndIso(en.planEnd);
+      if (end && !isFuture(end, at)) {
+        await writeStatusReceipt(token, page, desc, 'B 站未派发：已超过计划截止时间', 'Blocked');
+        return { taskId: null, kind: 'blocked' };
+      }
+      if (isFuture(toStartIso(en.planDate), at)) return { taskId: null, kind: 'scheduled' };
+      const result = await dispatchNotionBilibili(pool, {
+        pageId: page.id,
+        sourceDatabaseId: page.parent?.type === 'database_id' ? page.parent.database_id : undefined,
+        sourceTenantId: tenantFor(env, NOTION_TASKS_DB),
+        binding: JSON.parse(env.NOTION_BILIBILI_VERIFY_BINDING ?? 'null'),
+      }, { createTask: opts.createBilibiliTask });
+      await writeStatusReceipt(token, page, desc, `brain:${result.taskId} ✓已接管`);
+      return result;
+    } catch (error) {
+      if (!['notion_bilibili_binding_unavailable', 'foundation_release_not_ready',
+        'bilibili_verification_release_invalid', 'foundation_idempotency_conflict'].includes(error.code)) throw error;
+      await writeStatusReceipt(token, page, desc, 'B 站未派发：请核对该页的执行绑定、发布版本和原任务', 'Blocked');
+      return { taskId: null, kind: 'blocked' };
+    }
+  }
   if (stages.length > 1) {
     await writeStatusReceipt(token, page, desc, '未派发：每个 Notion 页面只接一个获客 Workflow', 'Blocked');
     return { taskId: null, kind: 'blocked' };

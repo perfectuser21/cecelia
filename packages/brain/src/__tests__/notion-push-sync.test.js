@@ -616,6 +616,37 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
     expect(mockCreateRoutedTask).not.toHaveBeenCalled();
   });
 
+  it('only the bound Notion Bilibili order reaches the read-only intake and gets a receipt', async () => {
+    const { ingestDelegatedPage } = await import('../notion-push-sync.js');
+    const { ENGLISH_TASKS_DB } = await import('../notion-leadgen-dispatch.js');
+    const pageId = '55cf40a1-f437-4d39-84e5-1d05cced942c';
+    const tenantId = '94e41caf-55bd-4bbf-9a6e-2aaf467a118d';
+    const binding = {
+      page_id: pageId, source_tenant_id: 'default', tenant_id: tenantId,
+      workflow_id: '84c928c4-cab3-448c-879d-c53810740068',
+      release_id: '630a4dd6-eb6d-4a8c-95d6-370c8d330600',
+      observation_id: '7fd83048-4288-4b46-8793-a0cd5008526c',
+    };
+    const createBilibiliTask = vi.fn().mockResolvedValue({ task: { id: 'accepted-task' } });
+    const opts = { env: { NOTION_BILIBILI_VERIFY_BINDING: JSON.stringify(binding) }, createBilibiliTask };
+    mockNotionReq.mockResolvedValue({});
+    const page = { ...notionPage({ id: pageId, name: 'B 站核验', desc: '[bilibili-verify-existing]' }),
+      parent: { type: 'database_id', database_id: ENGLISH_TASKS_DB } };
+    const pool = { query: mockQuery };
+    await expect(ingestDelegatedPage(pool, 'fixture', {
+      ...page, id: tenantId,
+    }, opts)).resolves.toMatchObject({ kind: 'blocked' });
+    expect(createBilibiliTask).not.toHaveBeenCalled();
+    await expect(ingestDelegatedPage(pool, 'fixture', page, opts)).resolves.toEqual({ taskId: 'accepted-task', kind: 'workflow_dispatch' });
+    expect(createBilibiliTask).toHaveBeenCalledTimes(1);
+    expect(createBilibiliTask).toHaveBeenCalledWith(pool, {
+      workflow_id: binding.workflow_id, release_id: binding.release_id, observation_id: binding.observation_id, bvid: 'BV1cLpG6cEHH',
+    }, { notionPageId: pageId, notionTenantId: tenantId });
+    expect(mockNotionReq.mock.calls.some(([,, method, body]) => method === 'PATCH'
+      && JSON.stringify(body).includes('brain:accepted-task'))).toBe(true);
+    expect(mockCreateRoutedTask).not.toHaveBeenCalled();
+  });
+
   it('无前缀标题 → priority 缺省 P2，标题原样', async () => {
     const mod = await import('../notion-push-sync.js');
     mockNotionReq.mockImplementation(async (token, path) => {
