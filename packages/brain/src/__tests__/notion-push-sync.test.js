@@ -638,7 +638,8 @@ describe('pullNotionTasks — Notion Delegated → Brain 接手', () => {
     }, opts)).resolves.toMatchObject({ kind: 'blocked' });
     expect(createBilibiliTask).not.toHaveBeenCalled();
     await expect(ingestDelegatedPage(pool, 'fixture', page, opts)).resolves.toEqual({ taskId: 'accepted-task', kind: 'workflow_dispatch' });
-    expect(createBilibiliTask).toHaveBeenCalledExactlyOnceWith(pool, {
+    expect(createBilibiliTask).toHaveBeenCalledTimes(1);
+    expect(createBilibiliTask).toHaveBeenCalledWith(pool, {
       workflow_id: binding.workflow_id, release_id: binding.release_id, observation_id: binding.observation_id, bvid: 'BV1cLpG6cEHH',
     }, { notionPageId: pageId, notionTenantId: tenantId });
     expect(mockNotionReq.mock.calls.some(([,, method, body]) => method === 'PATCH'
