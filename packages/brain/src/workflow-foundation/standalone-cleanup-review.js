@@ -4,6 +4,7 @@ import { onlyKeys, requireFoundation } from './contracts.js';
 
 export const desktopCleanupFailure = 'standalone_cleanup_unconfirmed';
 export const desktopUnknown = 'DESKTOP_UNKNOWN';
+export const collectionOpenAppReview = 'standalone-102-open-app-timeout-review/v1';
 export const preflightTimeout = 'TOOL_RESULT_UNKNOWN';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
@@ -93,6 +94,28 @@ function verifyAccountForegroundRefusal(proof, review, host) {
   return {sha256:proof.sha256,snapshot:verifyCompanySnapshot(proof.company_snapshot,host)};
 }
 
+function verifyCollectionOpenAppTimeout(proof, review, host, target, leaves) {
+  onlyKeys(proof,['raw','sha256','leaf_ledger']);
+  const records = readJsonl(proof,4096);
+  invalid(records.length === 2);
+  const {stdout,stderr} = controllerFailure(records[0],124);
+  const diagnostic = [
+    'args: [-p, com.ss.android.ugc.aweme, -c, android.intent.category.LAUNCHER, 1]',
+    ' arg: "-p"',' arg: "com.ss.android.ugc.aweme"',' arg: "-c"',' arg: "android.intent.category.LAUNCHER"',' arg: "1"',
+    'data="com.ss.android.ugc.aweme"','data="android.intent.category.LAUNCHER"',
+    'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+host.run_id,
+    'guarded command timeout: whole command and children terminated; owner lock retained','',
+  ].join('\n');
+  invalid(stdout === '' && stderr === diagnostic);
+  verifyControllerRevocation(records,['inspect'],review);
+  const version = ['version'];
+  const launch = [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'];
+  const foreground = [...target,'shell','dumpsys','window','displays'];
+  const commands = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
+    version,launch,version,foreground,version,foreground,version];
+  return {sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,false)};
+}
+
 function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null) {
   let previousEnd = 0;
   for (const [index,leaf] of leaves.entries()) {
@@ -111,11 +134,14 @@ function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null) {
 export function verifyDesktopCleanupProof(review, host) {
   const artifact = review.cleanup_diagnostic;
   onlyKeys(artifact,['raw','sha256','adb_endpoint','adb_serial','central_lease_version','desktop_readback',
-    'terminal_ack_ledger','preflight_timeout','account_foreground_refusal']);
+    'terminal_ack_ledger','preflight_timeout','account_foreground_refusal','open_app_timeout']);
   const { raw, sha256, adb_endpoint: endpoint, adb_serial: serial, central_lease_version: version, desktop_readback: desktop,
-    terminal_ack_ledger:ledger,preflight_timeout:controller,account_foreground_refusal:account } = artifact;
+    terminal_ack_ledger:ledger,preflight_timeout:controller,account_foreground_refusal:account,open_app_timeout:openApp } = artifact;
+  const collectionOpenApp = review.protocol === collectionOpenAppReview;
+  invalid(collectionOpenApp ? openApp !== undefined && account === undefined && ledger === undefined : openApp === undefined);
   const accountRefused=account!==undefined;
-  const preflight=review.admission_code===preflightTimeout && !accountRefused;
+  const preflight=review.admission_code===preflightTimeout && !accountRefused && !collectionOpenApp;
+  if (collectionOpenApp) invalid(review.admission_code === preflightTimeout);
   invalid((review.admission_code===preflightTimeout || !accountRefused && review.admission_code===desktopUnknown)
     && review.hardware_diagnostic===undefined);
   invalid(preflight ? ledger!==undefined && controller!==undefined
@@ -150,18 +176,21 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(host.run_directory + '/standalone-leaves/')
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.split('/').at(-1))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (accountRefused ? 16 : 10));
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (accountRefused ? 16 : collectionOpenApp ? 12 : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused ? readOnly : null);
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collectionOpenApp ? readOnly : null);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
   const startup=[versionProbe,versionProbe,[...target,'get-state'],versionProbe];
-  let ledgerSha256,accountProof;
-  if(accountRefused){
+  let ledgerSha256,accountProof,openAppProof;
+  if (collectionOpenApp) {
+    openAppProof = verifyCollectionOpenAppTimeout(openApp,review,host,target,seal.leaves);
+    ledgerSha256 = openAppProof.ledgerSha256;
+  } else if(accountRefused){
     accountProof=verifyAccountForegroundRefusal(account,review,host);
     const commands=[...startup,model,versionProbe,call,versionProbe,foregroundProbe,...startup,model,versionProbe,foregroundProbe];
     ledgerSha256=verifyLeafLedger(account.leaf_ledger,seal.leaves,commands,false);
@@ -172,7 +201,7 @@ export function verifyDesktopCleanupProof(review, host) {
     ledgerSha256=verifyLeafLedger(ledger,seal.leaves,commands,true);
   }
   const preflightProof=preflight ? verifyPreflightTimeout(controller,review,host,desktop.serial) : undefined;
-  return { sha256, ledgerSha256, preflightProof, accountProof, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
+  return { sha256, ledgerSha256, preflightProof, accountProof, openAppProof, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
 }
 
 export function verifyReleasedCleanupProof(review, host, blockedAt) {

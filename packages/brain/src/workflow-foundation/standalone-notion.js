@@ -134,7 +134,9 @@ export async function finishStandaloneNotionTask(pool, input) {
     const stored = task.result.standalone_receipt;
     if (stored) {
       const reviewedSource = task.payload.source === 'notion_leadgen_101'
-        || task.payload.source === 'notion_leadgen_102' && receipt.reason === 'standalone_business_unconfirmed';
+        || task.payload.source === 'notion_leadgen_102' && (receipt.reason === 'standalone_business_unconfirmed'
+          || receipt.reason === 'standalone_cleanup_unconfirmed'
+            && /^[a-f0-9]{64}$/.test(task.result.standalone_start_review?.collection_open_app_timeout_sha256 ?? ''));
       const reviewedStart = task.status === 'failed' && status === 'blocked' && reviewedSource
         && task.result.standalone_start_review?.protocol === 'standalone-start-failure-settlement/v1'
         && task.result.standalone_start_review.run_id === receipt.run_id
