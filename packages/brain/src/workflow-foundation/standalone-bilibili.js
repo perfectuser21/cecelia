@@ -38,13 +38,20 @@ export async function resolveBilibiliVerification(db,input) {
     && item.activity_id===reference.activity_id);
   const steps=activity?.payload.steps??[];
   const step=steps[0];
-  const provider=components.find(component=>component.kind==='code'&&component.repo===providerRepo
-    && component.path===providerPath && component.revision===workflow.source_commit
-    && /^sha256:[a-f0-9]{64}$/.test(component.digest));
-  requireFoundation((environment==='production'||environment==='staging:'+workflow.source_commit)
+  const bindings=activity?.payload.implementation_bindings??[];
+  const provider=bindings.find(binding=>binding.path===providerPath);
+  const staging=environment==='staging:'+workflow.source_commit;
+  const matchesRelease=bindings.every(binding=>{
+    const rows=components.filter(component=>component.path===binding.path);
+    return binding.kind==='code'&&binding.status==='verified'&&binding.repo===providerRepo
+      && binding.revision===workflow.source_commit && /^sha256:[a-f0-9]{64}$/.test(binding.digest)
+      && rows.length===1 && ['kind','repo','revision','digest'].every(key=>rows[0][key]===binding[key]);
+  });
+  requireFoundation((environment==='production'||staging)
     && fixed.definition.observation_id===input.observation_id
-    && components.some(component=>component.kind==='repo')
-    && components.every(component=>component.repo===providerRepo&&component.revision===workflow.source_commit)
+    && components.some(component=>component.kind==='repo'&&component.repo===providerRepo&&component.revision===workflow.source_commit)
+    && components.every(component=>component.repo===providerRepo&&(staging||component.revision===workflow.source_commit))
+    && matchesRelease
     && workflow.payload.contract?.source?.repo===providerRepo && /^[a-f0-9]{40}$/.test(workflow.source_commit)
     && workflow.payload.contract.runtime?.entrypoint===operation && workflow.payload.activities.length===1
     && reference.slot_key===operation && steps.length===1 && UUID.test(step?.step_id??'')

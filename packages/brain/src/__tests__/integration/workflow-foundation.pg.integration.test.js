@@ -96,7 +96,8 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
 it.each(['production','staging:'+'b'.repeat(40)])('B站只读任务在%s用同一原生清单交付 Activity 和规范 Step',async environment=>{
  const source='android_bilibili_verify_existing',machine_id='xian-m4',bvid='BV1cLpG6cEHH';
  fixture=await foundationHttpFixture({workflowKey:source,releaseTarget:machine_id,readonlyVerification:true});
- const {registration,release}=await fixture.publish({environment});
+ const archivedRepoRevision=environment.startsWith('staging:')?'c'.repeat(40):undefined;
+ const {registration,release}=await fixture.publish({environment,archivedRepoRevision});
  const gate=(await fixture.request('/releases/'+release.id+'/gate')).body;
  const request={workflow_id:registration.workflow_id,release_id:release.id,observation_id:gate.current_observation_id,bvid};
  const path='/workflow-foundation/standalone';
