@@ -8,7 +8,7 @@ import { beginBrainLaunch, finishBrainLaunch } from '../../drain.js';
 import { taskLeaseFixture, seedTask } from '../helpers/task-lease-pg-fixture.js';
 
 // Only external resource observations are controlled; claim HTTP, SQL and budget are real.
-const context = vi.hoisted(() => ({ pool: null, processes: [] }));
+const context = vi.hoisted(() => ({ pool: null, processes: [], registryError: false }));
 vi.mock('../../db.js', () => ({ default: {
   query: (...args) => context.pool.query(...args),
   connect: (...args) => context.pool.connect(...args),
@@ -19,7 +19,7 @@ vi.mock('../../executor.js', () => ({
   getBudgetCap: () => ({ physical: 11, budget: 11, effective: 11 }),
   checkServerResources: () => ({ effectiveSlots: 11, metrics: { max_pressure: 0.1 } }),
   getActiveProcessCount: () => context.processes.length,
-  getActiveProcesses: () => context.processes,
+  getActiveProcesses: () => { if (context.registryError) throw Error('fixture registry unavailable'); return context.processes; },
 }));
 vi.mock('../../fleet-resource-cache.js', () => ({
   getFleetStatus: () => [], getRemoteCapacity: () => null, getTotalEffectiveSlots: () => 11,
@@ -44,7 +44,7 @@ beforeAll(async () => {
   calculateSlotBudget = budget.calculateSlotBudget; resetBudget = budget._resetSlotBuffer;
 });
 beforeEach(async () => {
-  context.processes = []; resetBudget();
+  context.processes = []; context.registryError = false; resetBudget();
   await fx.pool.query('TRUNCATE tasks, task_runs, task_events, task_leases CASCADE');
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -147,6 +147,39 @@ describe.sequential('真实目录记账与自动执行池归属', () => {
       if (result.rows[0]?.independent_tasks?.length) failNext = true;
       return result;
     });
+    expect((await calculateSlotBudget()).taskPool.used).toBe(1);
+  });
+
+  it('registry观测失败不授独立豁免，基数保持占位', async () => {
+    await claim(); context.registryError = true;
+    expect((await calculateSlotBudget()).taskPool.used).toBe(1);
+  });
+
+  it('两次观测之间出现真实Task关联controller时保守占位', async () => {
+    const id = await claim(); const original = fx.pool.query.bind(fx.pool); let injected = false;
+    vi.spyOn(fx.pool, 'query').mockImplementation(async (...args) => {
+      const result = await original(...args);
+      if (!injected && result.rows[0]?.independent_tasks?.length) {
+        injected = true; context.processes = [{ taskId: id, runId: randomUUID(), alive: true }];
+      }
+      return result;
+    });
+    expect((await calculateSlotBudget()).taskPool.used).toBe(1);
+    expect(injected).toBe(true);
+  });
+
+  it('原匿名admission不新增容量政策，不会反占唯一待派发槽', async () => {
+    await claim(); const token = beginBrainLaunch();
+    try {
+      const budget = await calculateSlotBudget();
+      expect(budget.taskPool.used).toBe(0);
+      expect(budget.taskPool.available).toBe(11);
+    } finally { finishBrainLaunch(token); }
+  });
+
+  it('有头标签也不能覆盖不匹配的当前claim租约', async () => {
+    const id = await claim({ leaseSeconds: 120 });
+    await fx.pool.query("UPDATE task_leases SET claimer='unconfirmed-other-owner' WHERE task_id=$1", [id]);
     expect((await calculateSlotBudget()).taskPool.used).toBe(1);
   });
 
