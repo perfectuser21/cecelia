@@ -359,3 +359,80 @@ it('rejects an unrelated company snapshot or a non-timeout tool error', async ()
   expect((await f.state()).status).toBe('blocked');
   expect((await f.readLock()).locked_by).toBe(f.task.id);
 });
+
+async function accountForegroundReview() {
+  const f = await desktopCleanupReview();
+  const { review } = f.body;
+  const { company_id, tenant_id, version } = (await f.state()).payload.scope.company;
+  const target = ['-H', '127.0.0.1', '-P', '5045', '-s', '127.0.0.1:15555'];
+  const versionProbe = ['version'];
+  const state = [...target, 'get-state'];
+  const model = [...target, 'shell', 'getprop', 'ro.product.model'];
+  const call = [...target, 'shell', 'dumpsys', 'telephony.registry'];
+  const foreground = [...target, 'shell', 'dumpsys', 'window', 'displays'];
+  const commands = [
+    versionProbe, versionProbe, state, versionProbe, model, versionProbe, call, versionProbe, foreground,
+    versionProbe, versionProbe, state, versionProbe, model, versionProbe, foreground,
+  ];
+  const fields = f.cleanup.leaves.leaves[0];
+  const leaves = commands.map((argv,index)=>({
+    ...fields, sequence:index+1, pid:fields.pid+index,
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex'),
+  }));
+  const rawLines = rows => rows.map(row=>JSON.stringify(row)).join('\n')+'\n';
+  const ledger = leaves.flatMap(leaf=>{
+    const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
+    const intent={sequence,argv_sha256,intent_at,boundary};
+    return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
+  });
+  f.cleanup.leaves.leaves = leaves;
+  review.admission_code = review.revocation.reason = 'TOOL_RESULT_UNKNOWN';
+  Object.assign(review.cleanup_diagnostic, f.seal(JSON.stringify(f.cleanup)), {
+    account_foreground_refusal: {
+      ...f.seal(rawLines([
+        {operation:'phone',code:'STANDALONE_NATIVE_COMMAND',controller_exit_code:2,at:review.observed_at,
+          diagnostic:{stdout:'',stderr:'standalone account entry is not in Douyin foreground; navigation refused\n'}},
+        {operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at:review.observed_at},
+      ])),
+      company_snapshot:{company_id,tenant_id,version,line_key:'fixture',run_id:f.job.run_id,count:1},
+      leaf_ledger:f.seal(rawLines(ledger)),
+    },
+  });
+  return {...f, ledger, rawLines};
+}
+
+it('settles an exact account foreground refusal with only returned read-only operations and preserves the receipt', async () => {
+  const f=await accountForegroundReview();
+  const proof=f.body.review.cleanup_diagnostic.account_foreground_refusal;
+  const result=await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect(result.body).toMatchObject({status:'failed',retry_safe:false,replayed:false});
+  expect((await f.state()).result).toMatchObject({
+    standalone_receipt:f.receipt,
+    standalone_start_review:{account_foreground_refusal_sha256:proof.sha256,cleanup_ledger_sha256:proof.leaf_ledger.sha256,
+      company_snapshot:proof.company_snapshot,central_release_performed:true},
+  });
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.readLock()).locked_by).toBeNull();
+  expect((await f.reconcile()).body).toMatchObject({replayed:true});
+});
+
+it('keeps the account foreground refusal quarantined without exact diagnostics, all read-only leaves and the same company', async () => {
+  const f=await accountForegroundReview();
+  const diagnostic=f.body.review.cleanup_diagnostic;
+  const proof=structuredClone(diagnostic.account_foreground_refusal);
+  diagnostic.account_foreground_refusal=null;
+  expect((await f.reconcile()).status).toBe(400);
+  diagnostic.account_foreground_refusal={...structuredClone(proof),
+    leaf_ledger:f.seal(f.rawLines(f.ledger.slice(0,-1)))};
+  expect((await f.reconcile()).status).toBe(400);
+  diagnostic.account_foreground_refusal={...structuredClone(proof),
+    ...f.seal(proof.raw.replace('navigation refused','not the exact controller refusal'))};
+  expect((await f.reconcile()).status).toBe(400);
+  diagnostic.account_foreground_refusal=structuredClone(proof);
+  diagnostic.account_foreground_refusal.company_snapshot.company_id=randomUUID();
+  expect((await f.reconcile()).status).toBe(409);
+  expect((await f.state()).status).toBe('blocked');
+  expect((await f.run()).status).toBe('running');
+  expect((await f.readLock()).locked_by).toBe(f.task.id);
+});
