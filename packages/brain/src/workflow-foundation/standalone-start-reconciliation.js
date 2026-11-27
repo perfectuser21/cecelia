@@ -6,7 +6,7 @@ import { digest } from '../orchestrator/commander-decision.js';
 import { validateMachineRequest } from './claim.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
-import { collectionOpenAppReview, desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
+import { collectionOpenAppReview, collectionAccountReadReview, desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
@@ -67,7 +67,7 @@ function verifyRequest(runId, input) {
   const review = input.review;
   onlyKeys(review, ['protocol','observed_at','evidence_sha256','admission_code','host_process_exited','native_operations',
     'business_effects','local_lock','host_proof','revocation','hardware_diagnostic','cleanup_diagnostic']);
-  const collectionOpenAppTimeout = review.protocol === collectionOpenAppReview;
+  const collectionOpenAppTimeout = [collectionOpenAppReview,collectionAccountReadReview].includes(review.protocol);
   const desktopCleanup = collectionOpenAppTimeout || review.protocol === 'standalone-pre-native-cleanup-review/v1';
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
@@ -125,7 +125,8 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
-    if(cleanup?.openAppProof?.profile!==undefined)check(cleanup.openAppProof.profile===scope.profile);
+    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile;
+    if(collectionProfile!==undefined)check(collectionProfile===scope.profile);
     const preflight = cleanup?.preflightProof, account = cleanup?.accountProof;
     const snapshot = (preflight ?? account)?.snapshot;
     if (snapshot) {
@@ -200,6 +201,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       ...(preflight ? { preflight_timeout_sha256:preflight.sha256 } : {}),
       ...(account ? { account_foreground_refusal_sha256:account.sha256 } : {}),
       ...(cleanup?.openAppProof ? { collection_open_app_timeout_sha256:cleanup.openAppProof.sha256 } : {}),
+      ...(cleanup?.accountReadProof ? { collection_account_read_timeout_sha256:cleanup.accountReadProof.sha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
         central_release_performed:releaseCentral } : {}) };

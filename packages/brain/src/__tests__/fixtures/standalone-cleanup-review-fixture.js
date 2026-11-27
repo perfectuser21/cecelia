@@ -30,9 +30,9 @@ export async function prepareDesktopCleanupReview(f, pool, serial) {
   return {...f,readLock,cleanup,seal};
 }
 
-export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile } = {}) {
+export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRead = false } = {}) {
   const { review } = f.body;
-  review.protocol = 'standalone-102-open-app-timeout-review/v1';
+  review.protocol = accountRead ? 'standalone-102-account-read-timeout-review/v1' : 'standalone-102-open-app-timeout-review/v1';
   review.admission_code = review.revocation.reason = 'TOOL_RESULT_UNKNOWN';
   const target = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
   const version = ['version'];
@@ -44,12 +44,17 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile } = {}) {
     const ui = '/sdcard/douyin-leadgen-ui-'+uiProfile+'.xml';
     const remove = [...target,'shell','rm','-f',ui];
     const dump = [...target,'shell','uiautomator','dump','--compressed',ui];
-    commands.push(remove,version,dump,version,[...target,'shell','stat','-c','%s',ui],version,remove,version,dump);
+    const stat = [...target,'shell','stat','-c','%s',ui];
+    if (accountRead) {
+      commands.splice(9);
+      commands.push(version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
+        version,foreground,version,foreground,version,remove,version,dump,version,stat,version,remove,version,dump,version,stat);
+    } else commands.push(remove,version,dump,version,stat,version,remove,version,dump);
     Object.assign(f.cleanup.leaves,{complete:false,requests_returned:false});
   }
   const fields = f.cleanup.leaves.leaves[0];
   const leaves = commands.map((argv,index)=>({...fields,sequence:index+1,pid:fields.pid+index,
-    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex'),code:uiProfile&&index===16?1:0}));
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex'),code:uiProfile&&(accountRead?[23,29]:[16]).includes(index)?1:0}));
   f.cleanup.leaves.leaves = leaves;
   const rawLines = rows => rows.map(row=>JSON.stringify(row)).join('\n')+'\n';
   const ledger = leaves.flatMap(leaf=>{
@@ -59,13 +64,14 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile } = {}) {
   });
   if (uiProfile) ledger.push({...leaves.at(-1),phase:'unknown'});
   Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
-    open_app_timeout:{
+    [accountRead?'account_read_timeout':'open_app_timeout']:{
       ...f.seal(rawLines([
+        ...(accountRead?[{operation:'business',code:'STANDALONE_COLLECTION_ACCOUNT_REQUIRED',at:review.observed_at}]:[]),
         {operation:'phone',code:'STANDALONE_NATIVE_COMMAND',controller_exit_code:124,at:review.observed_at,
           diagnostic:{stdout:'',stderr:[
-            'args: [-p, com.ss.android.ugc.aweme, -c, android.intent.category.LAUNCHER, 1]',
+            ...(!accountRead?['args: [-p, com.ss.android.ugc.aweme, -c, android.intent.category.LAUNCHER, 1]',
             ' arg: "-p"',' arg: "com.ss.android.ugc.aweme"',' arg: "-c"',' arg: "android.intent.category.LAUNCHER"',' arg: "1"',
-            'data="com.ss.android.ugc.aweme"','data="android.intent.category.LAUNCHER"',
+            'data="com.ss.android.ugc.aweme"','data="android.intent.category.LAUNCHER"']:[]),
             'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+f.job.run_id,
             'guarded command timeout: whole command and children terminated; owner lock retained','',
           ].join('\n')}},

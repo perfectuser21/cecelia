@@ -33,7 +33,7 @@ export function createRunReconciliationRouter({pool=defaultPool,nativeTransport}
     try{res.json(await reconcileNativeAgentResources(pool,req.params.run_id,req.body,{principal:'authenticated-operator',...(nativeTransport?{transport:nativeTransport}:{})}));}
     catch(error){res.status(error.status??503).json({error:error.code??'native_agent_cleanup_unknown'});}
   });
-  router.post('/:run_id/standalone-start-reconciliation',json({limit:'32kb'}),(req,res,next)=>{
+  router.post('/:run_id/standalone-start-reconciliation',json({limit:'48kb'}),(req,res,next)=>{
     if(!process.env.CECELIA_INTERNAL_TOKEN)return res.status(503).json({error:'standalone_start_review_auth_unconfigured'});
     return internalAuth(req,res,next);
   },async(req,res)=>{
