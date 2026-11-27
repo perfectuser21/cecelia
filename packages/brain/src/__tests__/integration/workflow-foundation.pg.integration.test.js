@@ -21,8 +21,12 @@ import fs from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {runStandaloneWorkerOnce} from '../../../scripts/standalone-skill/worker.mjs';
 import {digest} from '../../orchestrator/commander-decision.js';
+import {reconcileSteps} from '../../lib/step-reconcile.js';
 import {createFoundationTask} from '../../workflow-foundation/registry.js';
 import {dispatchNotionLeadgen,ENGLISH_TASKS_DB} from '../../notion-leadgen-dispatch.js';
+import {dispatchNotionBilibili} from '../../notion-bilibili-dispatch.js';
+import {pushEnglishTask} from '../../lib/notion-english-task-sync.js';
+import {PUSH_QIUMI_QUERY} from '../../notion-gtd-sync.js';
 import path from 'node:path';
 import {foundationHttpFixture,until} from '../fixtures/workflow-foundation-http.js';
 import processState from '../../orchestrator/activity-supervisor-state.cjs';
@@ -89,7 +93,7 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
 },30000);
 
-it.each(['production','staging:'+'b'.repeat(40)])('B站只读任务在%s通过原 worker 状态账保留一次原生证据',async environment=>{
+it.each(['production','staging:'+'b'.repeat(40)])('B站只读任务在%s用同一原生清单交付 Activity 和规范 Step',async environment=>{
  const source='android_bilibili_verify_existing',machine_id='xian-m4',bvid='BV1cLpG6cEHH';
  fixture=await foundationHttpFixture({workflowKey:source,releaseTarget:machine_id,readonlyVerification:true});
  const {registration,release}=await fixture.publish({environment});
@@ -101,11 +105,28 @@ it.each(['production','staging:'+'b'.repeat(40)])('B站只读任务在%s通过�
  expect((await admit({...request,bvid:'BV1cLpG6cEHJ'})).status).toBe(400);
  expect((await admit({...request,action:'publish'})).status).toBe(400);
  expect((await admit({...request,observation_id:randomUUID()})).status).toBe(409);
- const pair=await Promise.all([admit(),admit()]);
- expect(pair.map(r=>r.status).sort()).toEqual([200,201]);
- const task=pair[0].body.task;
- expect(pair[1].body.task.id).toBe(task.id);
+ let task;
+ if(environment.startsWith('staging:')){
+  const page_id=randomUUID(),tenant_id=randomUUID();
+  const order={pageId:page_id,sourceDatabaseId:ENGLISH_TASKS_DB,sourceTenantId:'default',
+   binding:{...request,page_id,tenant_id,source_tenant_id:'default'}};
+  const dispatch=()=>dispatchNotionBilibili(fixture.pool,order);
+  const pair=await Promise.all([dispatch(),dispatch()]);
+  expect(pair[1].taskId).toBe(pair[0].taskId);
+  task=(await fixture.pool.query('SELECT * FROM tasks WHERE id=$1',[pair[0].taskId])).rows[0];
+  expect(task).toMatchObject({tenant_id,payload:{notion_page_id:page_id}});
+  expect((await admit()).status).toBe(409);
+ }else{
+  const pair=await Promise.all([admit(),admit()]);
+  expect(pair.map(r=>r.status).sort()).toEqual([200,201]);
+  task=pair[0].body.task;
+  expect(pair[1].body.task.id).toBe(task.id);
+ }
  expect(task.payload).toMatchObject({source,workflow_key:source,scope:{workflow_key:source,bvid,operation:'verify_existing',environment}});
+ const expectedPath=task.payload.workflow_definition.expected_path;
+ expect(expectedPath).toHaveLength(2);
+ expect(expectedPath[1]).toEqual({...expectedPath[0],step_id:task.payload.scope.step_id});
+ expect(task.payload.scope.step_id).toMatch(/^[a-f0-9-]{36}$/);
  expect((await fixture.request('/workflow-foundation/claim',{machine_id,task_id:task.id})).body).toEqual({job:null});
  const claim=(machine_id,sources,task_id)=>fixture.request(path+'/claim',{machine_id,sources,task_id});
  expect((await claim(machine_id)).body).toEqual({job:null});
@@ -170,7 +191,44 @@ it.each(['production','staging:'+'b'.repeat(40)])('B站只读任务在%s通过�
  const runs=(await fixture.pool.query('SELECT status,ended_at,run_id FROM task_runs WHERE task_id=$1',[task.id])).rows;
  expect(runs).toMatchObject([{status:'success',run_id:job.run_id,ended_at:expect.any(Date)}]);
  const reconciliation=await fixture.request('/runs/'+job.run_id+'/reconciliation');
- expect(reconciliation.body).toMatchObject({business_outcome:'pass',evidence_status:'verified',span_count:1,gaps:[]});
+ expect(reconciliation.body).toMatchObject({business_outcome:'pass',evidence_status:'verified',span_count:2,expected_count:2,gaps:[]});
+ if(task.payload.notion_page_id){
+  const page=task.payload.notion_page_id;
+  const {rows}=await fixture.pool.query(PUSH_QIUMI_QUERY);
+  const order=rows.find(row=>row.id===task.id);
+  expect(order).toMatchObject({en_page_id:page,status:'completed'});
+  let receiptBlock;
+  const notion=vi.fn(async(_token,path,method,body)=>{
+   if(method==='GET'&&path===`/pages/${page}`)return {properties:{Status:{status:{name:'Delegated'}}}};
+   if(method==='PATCH'&&path===`/blocks/${page}/children`)receiptBlock={...body.children[0],id:'receipt-block'};
+   const results=path.startsWith('/blocks/receipt-block/children?')?receiptBlock.toggle.children
+    : path.startsWith(`/blocks/${page}/children?`)&&receiptBlock?[receiptBlock]:[];
+   return {results,has_more:false};
+  });
+  expect(await pushEnglishTask('fixture',order,notion)).toBe('pushed');
+  expect(notion).toHaveBeenCalledWith('fixture',`/pages/${page}`,'PATCH',{properties:{Status:{status:{name:'Done'}}}});
+  expect(JSON.stringify(notion.mock.calls)).toContain(job.run_id);
+  expect(JSON.stringify(notion.mock.calls)).toContain(receipt.evidence[0]);
+ }
+ const spans=(await fixture.pool.query('SELECT run_id,step_id,evidence,outcome,started_at FROM spans WHERE run_id=$1 ORDER BY step_id NULLS FIRST',[job.run_id])).rows;
+ expect(spans).toMatchObject([
+  {step_id:null,outcome:'pass',evidence:{manifest_sha256:receipt.evidence[0]}},
+  {step_id:task.payload.scope.step_id,outcome:'pass',evidence:{manifest_sha256:receipt.evidence[0],observed:1}},
+ ]);
+ const steps=(await fixture.pool.query('SELECT id,key,readback FROM steps WHERE id=$1',[task.payload.scope.step_id])).rows;
+ expect(reconcileSteps({steps,spans:[spans[1]],runsWanted:1,requiredGreen:1})).toMatchObject({
+  verdict:'converged',runs:[{run_id:job.run_id,steps:[{step_id:task.payload.scope.step_id,status:'verified'}]}],issues:[],
+ });
+},30000);
+
+it.each([null,'unrelated_step'])('B站拒绝缺失或错误的规范私密播放 Step %s',async verificationStep=>{
+ const source='android_bilibili_verify_existing';
+ fixture=await foundationHttpFixture({workflowKey:source,releaseTarget:'xian-m4',readonlyVerification:true,verificationStep});
+ const {registration,release}=await fixture.publish({environment:'production'});
+ const gate=(await fixture.request('/releases/'+release.id+'/gate')).body;
+ const body={workflow_id:registration.workflow_id,release_id:release.id,observation_id:gate.current_observation_id,bvid:'BV1cLpG6cEHH'};
+ const response=await fixture.request('/workflow-foundation/standalone/bilibili-verify-existing',body);
+ expect(response).toMatchObject({status:409,body:{error:'bilibili_verification_release_invalid'}});
 },30000);
 
 it('B站候选与生产各限一单，候选环境必须完全匹配冻结来源 SHA',async()=>{
