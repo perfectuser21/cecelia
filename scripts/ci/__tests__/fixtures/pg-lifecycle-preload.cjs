@@ -9,8 +9,8 @@ const fakeBin = process.env.PG_LIFECYCLE_FAKE_BIN;
 const trace = process.env.PG_LIFECYCLE_TRACE;
 assert.ok(fakeBin && trace);
 const result = () => ({ status: 0, signal: null, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
-cp.spawnSync = function (command, args) {
-  state.commands.push({ command, args });
+cp.spawnSync = function (command, args, options) {
+  state.commands.push({ command, args, explicitFiles: options?.env?.CECELIA_PRIVATE_PG_EXPLICIT_FILES });
   if (command === process.execPath && args[0].endsWith('/packages/brain/node_modules/vitest/vitest.mjs')) {
     const receipt = args[args.indexOf('--outputFile') + 1];
     assert.ok(receipt && receipt.startsWith(path.dirname(state.data) + '/case-'));
@@ -19,15 +19,16 @@ cp.spawnSync = function (command, args) {
       testResults: [{ assertionResults: [{ status: 'passed' }] }] }));
     return result();
   }
+  if (command === process.execPath && args[0] === 'packages/brain/src/migrate.js') return result();
   const program = path.basename(command);
   assert.equal(path.dirname(command), fakeBin, 'no real command fallback');
-  assert.ok(['initdb', 'pg_ctl', 'pg_isready'].includes(program));
+  assert.ok(['initdb', 'pg_ctl', 'pg_isready', 'pg_dump', 'psql'].includes(program));
   if (program === 'initdb') state.data = args[args.indexOf('-D') + 1];
   if (program === 'pg_ctl' && args.includes('stop')) {
     assert.ok(state.admin.length > 0 && state.admin.every(client => client.closed), 'admin wire end must complete before backend stop');
     state.backendStopped = true;
   }
-  return result();
+  return program === 'pg_dump' ? { ...result(), stdout: Buffer.from('-- synthetic migration dump\n') } : result();
 };
 require('node:module').syncBuiltinESMExports();
 function query(config, sql) {
