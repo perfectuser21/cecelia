@@ -261,7 +261,7 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
   invalid(review.admission_code === 'CLEANUP_VERIFIED_NO_BUSINESS' && review.hardware_diagnostic === undefined
-    && typeof raw === 'string' && Buffer.byteLength(raw) <= 8192 && sha(raw) === sha256
+    && typeof raw === 'string' && Buffer.byteLength(raw) <= 12288 && sha(raw) === sha256
     && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
     && typeof leaseVersion === 'string' && /^[0-9]{1,12}$/.test(leaseVersion));
 
@@ -281,18 +281,37 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves));
+    && Array.isArray(seal.leaves) && seal.leaves.length <= 32);
   const target = ['-H','127.0.0.1','-P',socket[1],'-s',serial], version = ['version'];
   const state = [...target,'get-state'], foregroundProbe = [...target,'shell','dumpsys','window','displays'];
   const cleanup = [version,version,state,version,
     [...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
     version,[...target,'shell','input','keyevent','3'],version,foregroundProbe];
-  // 102 可在确认抖音前台后因工具缺失退出。只接受这一种完整启动序列。
-  const startup = [version,version,state,version,[...target,'shell','getprop','ro.product.model'],version,
-    [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'],version,foregroundProbe];
-  const commands = seal.leaves.length === cleanup.length ? cleanup : [...startup,...cleanup];
-  invalid(seal.leaves.length === commands.length);
+  invalid(seal.leaves.length >= cleanup.length);
   verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt));
+
+  const model = [...target,'shell','getprop','ro.product.model'];
+  const allowedReads = [version,state,model,foregroundProbe,[...target,'shell','dumpsys','telephony.registry']];
+  const commandDigest = argv => sha(JSON.stringify(argv));
+  const readByDigest = new Map(allowedReads.map(argv => [commandDigest(argv),argv]));
+  const launch = [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'];
+  const beforeLaunch = [version,version,state,version,model,version];
+  const startup = [...beforeLaunch,launch,version,foregroundProbe];
+  const prefix = seal.leaves.slice(0,-cleanup.length);
+  const launchDigest = commandDigest(launch);
+  const launchIndex = prefix.findIndex(leaf => leaf.argv_sha256 === launchDigest);
+  const startupStart = launchIndex - beforeLaunch.length;
+  const startupEnd = startupStart + startup.length;
+  if(launchIndex !== -1) invalid(startupStart >= 0 && startupEnd <= prefix.length);
+
+  // 允许任意次已知只读检查；唯一可选的非只读前缀必须是完整原启动序列。
+  const commands = prefix.map((leaf,index) => {
+    if(launchIndex !== -1 && index >= startupStart && index < startupEnd) return startup[index-startupStart];
+    const read = readByDigest.get(leaf.argv_sha256);
+    invalid(read);
+    return read;
+  });
+  commands.push(...cleanup);
   return { sha256, ledgerSha256:verifyLeafLedger(ledger,seal.leaves,commands,false),
     firstIntentAt:seal.leaves[0].intent_at, leaseVersion };
 }
