@@ -477,6 +477,8 @@ it.each([{}, { uiProfile:'fixture-cloud' }])('102 打开抖音超时后，仅凭
   wrongDesktop.review.cleanup_diagnostic.desktop_readback.focused_activity = 'com.ss.android.ugc.aweme/.MainActivity';
   expect((await f.reconcile(wrongDesktop)).status).toBe(400);
   const wrongLedger = structuredClone(f.body);
+  const emptyProof = structuredClone(f.body); emptyProof.review.cleanup_diagnostic.open_app_timeout = null;
+  expect((await f.reconcile(emptyProof)).status).toBe(400);
   const artifact = wrongLedger.review.cleanup_diagnostic.open_app_timeout;
   Object.assign(artifact.leaf_ledger,f.seal(artifact.leaf_ledger.raw.replace('"phase":"exit"','"phase":"unknown"')));
   expect((await f.reconcile(wrongLedger)).status).toBe(400);

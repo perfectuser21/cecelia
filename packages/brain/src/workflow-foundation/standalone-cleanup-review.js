@@ -174,7 +174,7 @@ export function verifyDesktopCleanupProof(review, host) {
     'local_released','central_released','desktop','leaves']);
   const seal = original.leaves;
   onlyKeys(seal,['complete','empty_complete','requests_returned','empty_requests_returned','epoch_fence_lost','leaves','ledger']);
-  const collectionPostReturn=collectionOpenApp && openApp.ui_profile!==undefined;
+  const collectionPostReturn=collectionOpenApp && openApp?.ui_profile!==undefined;
   const allReturned=ledger===undefined && !collectionPostReturn;
   invalid(original.task_id === host.task_id && original.run_id === host.run_id
     && original.execution_mode === 'codex-direct' && original.native_return_unknown === true
