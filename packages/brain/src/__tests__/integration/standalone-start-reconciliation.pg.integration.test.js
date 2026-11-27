@@ -32,7 +32,7 @@ async function blockedPhone({reason = 'standalone_start_unconfirmed', holdDevice
     definition: { ...job.definition, attempt_key: task.id+':1', actor: job.claimer },
     standalone: {
       scope: { workflow_key: workflowKey, source_commit: sourceCommit, approved_keywords: collection ? [] : ['验收'], ...(collection ? {source_run:'fixture-video-batch'} : {}), limit: 1,
-        serial, line: 'fixture', company: { company_id: randomUUID(), tenant_id: task.tenant_id, version: 1, policy_id: 'fixture' } },
+        serial, ...(collection ? { profile:'fixture-cloud' } : {}), line: 'fixture', company: { company_id: randomUUID(), tenant_id: task.tenant_id, version: 1, policy_id: 'fixture' } },
       skill: { name: 'douyin-leadgen-direct', version: '1.0.0', source_commit: sourceCommit, path: 'skill/SKILL.md', sha256: 'b'.repeat(64) },
     },
   });
@@ -469,8 +469,8 @@ it('102 已回桌面且零业务写入时结算原运行并解除新任务领取
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
 
-it('102 打开抖音超时后，仅凭完整原回执和现场已归位证据结算原运行',async()=>{
-  const f = prepareCollectionOpenAppTimeoutReview(await desktopCleanupReview(false,'102'));
+it.each([{}, { uiProfile:'fixture-cloud' }])('102 打开抖音超时后，仅凭原回执和现场归位结算 %j',async(options)=>{
+  const f = prepareCollectionOpenAppTimeoutReview(await desktopCleanupReview(false,'102'),options);
   const pending = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
   const wrongDesktop = structuredClone(f.body);

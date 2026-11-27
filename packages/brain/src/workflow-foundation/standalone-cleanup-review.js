@@ -30,13 +30,13 @@ function readJsonl({raw,sha256}, maxBytes) {
 function verifyLeafLedger(ledger, leaves, commands, terminalAckMissing) {
   onlyKeys(ledger,['raw','sha256']);
   invalid(leaves.length===commands.length && commands.every((argv,index)=>sha(JSON.stringify(argv))===leaves[index].argv_sha256));
-  const records=readJsonl(ledger,terminalAckMissing?12288:24576);
+  const records=readJsonl(ledger,terminalAckMissing&&commands.length<=12?12288:24576);
   const expected=leaves.flatMap(leaf=>{
     const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
     const intent={sequence,argv_sha256,intent_at,boundary};
     return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
   });
-  // Only the final local version probe lost its response handshake.
+  // Only the last leaf may have lost its response handshake.
   if(terminalAckMissing)expected.push({...leaves.at(-1),phase:'unknown'});
   invalid(isDeepStrictEqual(records,expected));
   return ledger.sha256;
@@ -94,8 +94,10 @@ function verifyAccountForegroundRefusal(proof, review, host) {
   return {sha256:proof.sha256,snapshot:verifyCompanySnapshot(proof.company_snapshot,host)};
 }
 
-function verifyCollectionOpenAppTimeout(proof, review, host, target, leaves) {
-  onlyKeys(proof,['raw','sha256','leaf_ledger']);
+function verifyCollectionOpenAppTimeout(proof, review, host, target, leaves, terminalAckMissing) {
+  onlyKeys(proof,['raw','sha256','leaf_ledger','ui_profile']);
+  const profile=proof.ui_profile;
+  invalid(terminalAckMissing ? typeof profile==='string' && /^[A-Za-z0-9_-]{1,80}$/.test(profile) : profile===undefined);
   const records = readJsonl(proof,4096);
   invalid(records.length === 2);
   const {stdout,stderr} = controllerFailure(records[0],124);
@@ -113,10 +115,15 @@ function verifyCollectionOpenAppTimeout(proof, review, host, target, leaves) {
   const foreground = [...target,'shell','dumpsys','window','displays'];
   const commands = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
     version,launch,version,foreground,version,foreground,version];
-  return {sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,false)};
+  if(terminalAckMissing){
+    const ui='/sdcard/douyin-leadgen-ui-'+profile+'.xml';
+    const remove=[...target,'shell','rm','-f',ui],dump=[...target,'shell','uiautomator','dump','--compressed',ui];
+    commands.push(remove,version,dump,version,[...target,'shell','stat','-c','%s',ui],version,remove,version,dump);
+  }
+  return {sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,terminalAckMissing),profile};
 }
 
-function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null) {
+function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null, missingUiStat = false) {
   let previousEnd = 0;
   for (const [index,leaf] of leaves.entries()) {
     onlyKeys(leaf,['sequence','argv_sha256','intent_at','boundary','pid','started_at','ended_at','code','signal',
@@ -125,7 +132,7 @@ function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null) {
       && leaf.boundary === 'darwin-sandbox-deny-process-fork-v1' && Number.isSafeInteger(leaf.pid) && leaf.pid > 0
       && [leaf.intent_at,leaf.started_at,leaf.ended_at].every(Number.isSafeInteger)
       && leaf.intent_at >= previousEnd && leaf.started_at >= leaf.intent_at && leaf.ended_at >= leaf.started_at
-      && leaf.ended_at <= cutoff && leaf.code === 0 && leaf.signal === null
+      && leaf.ended_at <= cutoff && leaf.code === (missingUiStat && index===16 ? 1 : 0) && leaf.signal === null
       && leaf.tainted === false && leaf.dump_crash_returned === false && leaf.request_returned === true);
     previousEnd = leaf.ended_at;
   }
@@ -167,7 +174,8 @@ export function verifyDesktopCleanupProof(review, host) {
     'local_released','central_released','desktop','leaves']);
   const seal = original.leaves;
   onlyKeys(seal,['complete','empty_complete','requests_returned','empty_requests_returned','epoch_fence_lost','leaves','ledger']);
-  const allReturned=ledger===undefined;
+  const collectionPostReturn=collectionOpenApp && openApp.ui_profile!==undefined;
+  const allReturned=ledger===undefined && !collectionPostReturn;
   invalid(original.task_id === host.task_id && original.run_id === host.run_id
     && original.execution_mode === 'codex-direct' && original.native_return_unknown === true
     && original.quarantine_verified === true && original.local_released === false
@@ -176,19 +184,19 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(host.run_directory + '/standalone-leaves/')
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.split('/').at(-1))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (accountRefused ? 16 : collectionOpenApp ? 12 : 10));
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collectionOpenApp ? readOnly : null);
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collectionOpenApp ? readOnly : null, collectionPostReturn);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
   const startup=[versionProbe,versionProbe,[...target,'get-state'],versionProbe];
   let ledgerSha256,accountProof,openAppProof;
   if (collectionOpenApp) {
-    openAppProof = verifyCollectionOpenAppTimeout(openApp,review,host,target,seal.leaves);
+    openAppProof = verifyCollectionOpenAppTimeout(openApp,review,host,target,seal.leaves,collectionPostReturn);
     ledgerSha256 = openAppProof.ledgerSha256;
   } else if(accountRefused){
     accountProof=verifyAccountForegroundRefusal(account,review,host);
