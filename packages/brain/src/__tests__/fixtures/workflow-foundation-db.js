@@ -4,7 +4,7 @@ import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {releaseEvidenceDatabase} from './release-evidence-db.js';
-import {migrationSql,migrationTable} from './minimum-definition-schema.js';
+import {migrationSql,migrationTable,withLegacyNames} from './minimum-definition-schema.js';
 import {prepareDefinitionFreeze,FREEZE_PROTOCOL} from '../../workflow-authoring/freeze.js';
 import {registerWorkflow,registrationDigest} from '../../workflow-authoring/registration.js';
 
@@ -40,14 +40,19 @@ async function addFoundationTaskSchema(db){
 }
 
 /** 隔离协议夹具：定义来源/CI报告是合成的，执行产物、PG、DBOS和宿主是真实的。 */
-export async function workflowFoundationDatabase({scenario='healthy',playbook,workflowKey,directInput}={}){
+export async function workflowFoundationDatabase({scenario='healthy',playbook,workflowKey,directInput,readonlyVerification=false}={}){
  const base=await releaseEvidenceDatabase(),f={...base,pool:base.db},root=fs.mkdtempSync(path.join(os.tmpdir(),'foundation-registration-'));
+ const repo=readonlyVerification?'perfectuser21/zenithjoy-workspace':FOUNDATION_FIXTURE_REPO;
  const dbosSchema=`foundation_dbos_${randomUUID().replaceAll('-','')}`;
  let closed=false;
  try{
   await addFoundationTaskSchema(f.pool);
   await f.pool.query(fs.readFileSync(path.join(brain,'migrations/558_commander_activity_actions.sql'),'utf8'));
   await f.pool.query(fs.readFileSync(path.join(brain,'migrations/559_commander_activity_attempts.sql'),'utf8'));
+  if(readonlyVerification)await withLegacyNames(f.pool,async()=>{
+   for(const file of ['514_span_occurrences.sql','516_span_definition_provenance.sql'])
+    await f.pool.query(fs.readFileSync(path.join(brain,'migrations',file),'utf8'));
+  });
   const cap=randomUUID(),vs=randomUUID(),task=randomUUID(),key=workflowKey??`foundation_${cap.slice(0,8)}`;
   await f.pool.query("INSERT INTO value_streams(id,name) VALUES($1,'隔离Foundation价值流')",[vs]);
   await f.pool.query("INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'隔离Foundation能力',$2,'active')",[cap,vs]);
@@ -60,22 +65,34 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook,wo
   const sourceFiles=Object.fromEntries(['adapter.mjs','work.mjs','commander.mjs','skill.txt'].map(name=>[name,fs.readFileSync(path.join(fixtureDir,name),'utf8')]));
   const profileDocument=JSON.stringify({schema_version:1,contract,...(playbook===undefined?{}:{playbook}),profile:{adapter:'adapter.mjs',files:Object.fromEntries(Object.entries(sourceFiles).map(([name,text])=>[name,hash(text)])),commander:{provider:'adapter'},scenario,realAgent:false}});
   sourceFiles['profile.json']=profileDocument;
-  const runtime={kind:'commander-foundation-v1',profile_ref:{repo:FOUNDATION_FIXTURE_REPO,path:'profile.json',revision:FOUNDATION_FIXTURE_REVISION,digest:`sha256:${hash(profileDocument)}`},timeout_ms:45000,input_schema:inputSchema};
-  const binding=name=>({kind:'code',repo:FOUNDATION_FIXTURE_REPO,path:name,revision:'contract'});
+  const runtime={kind:'commander-foundation-v1',profile_ref:{repo,path:'profile.json',revision:FOUNDATION_FIXTURE_REVISION,digest:`sha256:${hash(profileDocument)}`},timeout_ms:45000,input_schema:inputSchema};
+  const binding=name=>({kind:'code',repo,path:name,revision:'contract'});
   const definition={key,name:'隔离Foundation样例',capability_id:cap,channel:'internal',form:'code',version:'1.0.0',
-   source:{repo:FOUNDATION_FIXTURE_REPO,ref:'workflow.json',revision:FOUNDATION_FIXTURE_REVISION},runtime,
+   source:{repo,ref:'workflow.json',revision:FOUNDATION_FIXTURE_REVISION},runtime,
    activities:contract.activities.map((a,index)=>({key:a.key,name:a.key,executor_kind:'code',acceptance:[a.acceptance.description],
     implementation:{...binding('work.mjs'),ref:'work.mjs',version:'1.0.0'},
     ...(index===0?{implementation_bindings:Object.keys(sourceFiles).filter(name=>name!=='work.mjs').map(binding)}:{})}))};
+  if(readonlyVerification){
+   const skill=randomUUID(),provider='services/phone-adb-controller/standalone-bilibili-verify.mjs';
+   await f.pool.query("INSERT INTO skill_registry(id,name,status,location) VALUES($1,'android-bilibili-verify-existing','active',$2)",[skill,provider]);
+   sourceFiles[provider]='export const verifyExisting = () => null;\n';
+   definition.runtime={skill_id:skill,entrypoint:'verify_existing'};
+   definition.activities=[{...definition.activities[0],key:'verify_existing',
+    implementation_bindings:Object.keys(sourceFiles).filter(name=>name!=='work.mjs').map(binding)}];
+  }
   const reader=async s=>{
-   if(s.repo!==FOUNDATION_FIXTURE_REPO||s.revision!==FOUNDATION_FIXTURE_REVISION)throw Error('fixture_source_unknown');
+   if(s.repo!==repo||s.revision!==FOUNDATION_FIXTURE_REVISION)throw Error('fixture_source_unknown');
    if(s.path==='workflow.json')return JSON.stringify(Object.fromEntries(Object.entries(definition).filter(([k])=>k!=='source')));
    if(s.path==='.skills-source.json')return null;
    if(!Object.hasOwn(sourceFiles,s.path))throw Error('fixture_file_unknown');return sourceFiles[s.path];
   };
-  const bundleRoot=path.join(root,'bundles'),bundle=path.join(bundleRoot,FOUNDATION_FIXTURE_REPO,FOUNDATION_FIXTURE_REVISION),stateRoot=path.join(root,'state');
+  const bundleRoot=path.join(root,'bundles'),bundle=path.join(bundleRoot,repo,FOUNDATION_FIXTURE_REVISION),stateRoot=path.join(root,'state');
   fs.mkdirSync(bundle,{recursive:true});fs.mkdirSync(stateRoot,{recursive:true});
-  for(const [name,text] of Object.entries(sourceFiles))fs.writeFileSync(path.join(bundle,name),text);
+  for(const [name,text] of Object.entries(sourceFiles)){
+   const artifact=path.join(bundle,name);
+   fs.mkdirSync(path.dirname(artifact),{recursive:true});
+   fs.writeFileSync(artifact,text);
+  }
   async function register(d=definition){
    const proof=await prepareDefinitionFreeze(d,{readFile:reader,readBusinessFile:reader});
    const db=await f.pool.connect();try{
@@ -88,8 +105,8 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook,wo
   async function releaseSpec(receipt){
    const workflow=(await f.pool.query('SELECT * FROM workflow_definition_versions WHERE id=$1',[receipt.current_definition_version_id])).rows[0];
    const activities=(await f.pool.query('SELECT * FROM activity_definition_versions WHERE id=ANY($1::uuid[])',[workflow.payload.activities.map(r=>r.activity_version_id)])).rows;
-   const components=[{kind:'repo',repo:FOUNDATION_FIXTURE_REPO,revision:FOUNDATION_FIXTURE_REVISION},...Object.entries(sourceFiles).map(([name,text])=>({kind:'code',repo:FOUNDATION_FIXTURE_REPO,revision:FOUNDATION_FIXTURE_REVISION,path:name,digest:`sha256:${hash(text)}`}))];
-   const report=syntheticCiReport(workflow,activities,cap),ciReceipt={schema_version:1,actor:'implementation_ci_gate',source:report.source,report_sha256:hash(JSON.stringify(report)),verdict:'PASS',scope:'regression_tests',business_runtime_status:'not_evaluated',assertions:report.required_assertions.map(a=>({assertion_ref:a.assertion_ref,source_repo:FOUNDATION_FIXTURE_REPO,source_revision:FOUNDATION_FIXTURE_REVISION,source_bindings:a.source_bindings,test_sha256:'f'.repeat(64),exit_code:0,error:null,signal:null}))};
+   const components=[{kind:'repo',repo,revision:FOUNDATION_FIXTURE_REVISION},...Object.entries(sourceFiles).map(([name,text])=>({kind:'code',repo,revision:FOUNDATION_FIXTURE_REVISION,path:name,digest:`sha256:${hash(text)}`}))];
+   const report=syntheticCiReport(workflow,activities,cap,repo),ciReceipt={schema_version:1,actor:'implementation_ci_gate',source:report.source,report_sha256:hash(JSON.stringify(report)),verdict:'PASS',scope:'regression_tests',business_runtime_status:'not_evaluated',assertions:report.required_assertions.map(a=>({assertion_ref:a.assertion_ref,source_repo:repo,source_revision:FOUNDATION_FIXTURE_REVISION,source_bindings:a.source_bindings,test_sha256:'f'.repeat(64),exit_code:0,error:null,signal:null}))};
    return {release_key:`foundation-fixture-${randomUUID()}`,environment:'scratch',target:`fixture-host/${key}`,actor:'test:foundation',workflows:[{workflow_definition_version_id:workflow.id,payload_sha256:workflow.payload_sha256}],components,ci_evidence:[{report,receipt:ciReceipt,evidence_ref:'fixture:synthetic-ci-protocol-not-production-evidence'}]};
   }
   return {...f,root,dbosSchema,brain,key,task,cap,definition,profileDocument,bundleRoot,bundle,stateRoot,register,releaseSpec,
@@ -98,11 +115,11 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook,wo
 }
 
 // 此报告只为发布协议的正/反例提供完整固定身份；不声称在GitHub跑过业务CI。
-function syntheticCiReport(workflow,activities,capabilityId){
+function syntheticCiReport(workflow,activities,capabilityId,repo){
  const head=FOUNDATION_FIXTURE_REVISION,base='a'.repeat(40),h='c'.repeat(64);
- const source={repo:FOUNDATION_FIXTURE_REPO,base_revision:base,head_revision:head,changed_files:[{path:'profile.json',status:'modified'}]};
+ const source={repo,base_revision:base,head_revision:head,changed_files:[{path:'profile.json',status:'modified'}]};
  const evidence=revision=>({revision,graph_snapshot:{digest:h,source_revision:revision},projection:{projection_run_id:randomUUID(),manifest_version_id:randomUUID(),projection_digest:h,manifest_digest:h},gaps:[],traversal:{truncated:false},definition_versions:{workflows:[workflow],activities},file_coverage:[{change_index:0,path:'profile.json',matched_paths:['profile.json'],truncated:false}]});
  return {mapping_status:'verified',truncated:false,gaps:[],source,base:evidence(base),head:evidence(head),unclaimed_paths:[],
   affected_usages:activities.map(a=>({evidence:[{capability_id:capabilityId,activity_id:a.activity_id,assertion_step_ids:[null]}]})),
-  required_assertions:activities.map(a=>({assertion_ref:'tests/foundation-protocol.test.js',source_repo:FOUNDATION_FIXTURE_REPO,source_bindings:[{capability_id:capabilityId,activity_id:a.activity_id}]}))};
+  required_assertions:activities.map(a=>({assertion_ref:'tests/foundation-protocol.test.js',source_repo:repo,source_bindings:[{capability_id:capabilityId,activity_id:a.activity_id}]}))};
 }

@@ -1,9 +1,9 @@
-# 复核轻盈底座 101 前台账号拒绝后的受管清理
+# 轻盈底座接入 B 站既有私密作品核验
 
-Task: 535fdab5-7e2c-4921-861c-3a8885f6b915
+Task: a41629e2-dc29-42cf-a49b-7948ef73276c
 GP-Anchor: none(infra)
 
-- [x] 原始同 run 账号拒绝、16 个只读叶完全返回、1 条同范围配置快照及新鲜 HOME 证据才允许结算原失败并释放同持有者的中央锁。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
-- [x] 错误日志、叶账缺失或前台证明漂移拒绝，旧收尾路径和无重试语义保持。
-  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/standalone-start-reconciliation.pg.integration.test.js
+- [x] 固定 BVID、真机身份、只读合同和精确 xian-m4 安装发布才可入单，原 Commander 和 101–104 不会领取。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
+- [x] 同一运行的只读原生清单归档为一个 Activity span，原 worker 单次结算，未证实或证据不匹配拒绝完成。
+  Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js

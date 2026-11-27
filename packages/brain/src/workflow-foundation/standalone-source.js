@@ -7,3 +7,7 @@ export const standaloneWorkflows = Object.freeze({
 
 export const standaloneSources = Object.freeze(Object.keys(standaloneWorkflows).map(stage => `notion_leadgen_${stage}`));
 export const standaloneSourceList = standaloneSources.map(source => `'${source}'`).join(', ');
+
+export const bilibiliVerificationSource = 'android_bilibili_verify_existing';
+export const standaloneWorkerSources = Object.freeze([...standaloneSources, bilibiliVerificationSource]);
+export const standaloneWorkerSourceList = standaloneWorkerSources.map(source => `'${source}'`).join(', ');

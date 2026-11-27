@@ -2,13 +2,13 @@ import { getRelease, getReleaseGate } from '../lib/release-index.js';
 import { digest } from '../orchestrator/commander-decision.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 
-export async function resolveStandaloneRelease(db, { workflow_id, release_id }, workflowKey) {
+export async function resolveStandaloneRelease(db, { workflow_id, release_id }, workflowKey, { target = 'mmv', machineId = 'us-mac-m4' } = {}) {
   requireFoundation(UUID.test(workflow_id ?? '') && UUID.test(release_id ?? ''), 'foundation_identity_invalid', 400);
   const row = (await db.query('SELECT id,key,name,status FROM workflows WHERE id=$1', [workflow_id])).rows[0];
   requireFoundation(row && row.key === workflowKey, 'foundation_notion_workflow_invalid', 400);
   requireFoundation(row.status === 'active', 'foundation_workflow_not_active');
   const release = await getRelease(db, release_id);
-  requireFoundation(release.target === 'mmv', 'standalone_release_target_invalid');
+  requireFoundation(release.target === target, 'standalone_release_target_invalid');
   const workflow = release.payload.workflows.find(item => item.workflow_id === workflow_id);
   requireFoundation(workflow?.payload?.key === row.key, 'foundation_release_workflow_missing');
   const gate = await getReleaseGate(db, release_id);
@@ -22,7 +22,7 @@ export async function resolveStandaloneRelease(db, { workflow_id, release_id }, 
     return [entry, ...(activity.payload.steps ?? []).filter(step => step.step_id).map(step => ({ ...entry, step_id:step.step_id }))];
   });
   return {
-    row, machine_id: 'us-mac-m4',
+    row, release, workflow, machine_id: machineId,
     definition: {
       release_id, workflow_id, observation_id:gate.current_observation_id, workflow_definition_version_id:workflow.id,
       snapshot_sha256:workflow.payload_sha256, runtime_snapshot_sha256:digest({release_id, workflow_version_id:workflow.id}), expected_path,

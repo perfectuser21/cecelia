@@ -14,7 +14,7 @@
  * 接棒任何异常吞成 warn——终态已经落库，接棒失败不能把调用方变成 500 或让 tick 崩掉。
  */
 import { TERMINAL_STATUSES, RELAY_TERMINAL_STATUSES } from './task-status-transitions.js';
-import { standaloneSourceList } from '../workflow-foundation/standalone-source.js';
+import { bilibiliVerificationSource, standaloneSourceList } from '../workflow-foundation/standalone-source.js';
 
 /** 守卫用：唯一允许出现字面量终态 UPDATE 的模块（相对 src/）。 */
 export const TERMINAL_WRITE_HUB_MODULE = 'lib/task-terminal.js';
@@ -226,9 +226,11 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   } else if(standalone!==undefined){
     if(foundation!==undefined||taskId==null||status!=='completed'
       ||!/^[a-f0-9-]{36}$/.test(standalone.runId??''))throw Error('standalone_terminal_proof_invalid');
-    where.push(`payload->>'source' IN (${standaloneSourceList})
+    where.push(`((payload->>'source' IN (${standaloneSourceList})
+        AND result#>>'{codex_skill_direct,run_id}'=result#>>'{standalone_claim,run_id}')
+      OR (payload->>'source'='${bilibiliVerificationSource}'
+        AND result#>>'{bilibili_verification,run_id}'=result#>>'{standalone_claim,run_id}'))
       AND result#>>'{standalone_claim,run_id}'=$${push(standalone.runId)}
-      AND result#>>'{codex_skill_direct,run_id}'=result#>>'{standalone_claim,run_id}'
       AND EXISTS(SELECT 1 FROM task_runs sr WHERE sr.task_id=tasks.id AND sr.run_id=tasks.result#>>'{standalone_claim,run_id}'
         AND sr.ended_at IS NOT NULL AND sr.status='success' AND sr.context->>'source'='standalone-skill')`);
   }else if(foundation!==undefined){

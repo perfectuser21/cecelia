@@ -4,20 +4,25 @@ import {Router,json} from 'express';
 import {rateLimit} from 'express-rate-limit';
 import {TASK_MUTATION_RATE_LIMIT_OPTIONS} from './task-mutation-rate-limit.js';
 import defaultPool from '../db.js';
-import {internalAuthOrLoopback} from '../middleware/internal-auth.js';
+import {internalAuth,internalAuthOrLoopback} from '../middleware/internal-auth.js';
 import {listFoundationCatalog,createFoundationTask} from '../workflow-foundation/registry.js';
 import {claimFoundationTask,prepareFoundationTask} from '../workflow-foundation/claim.js';
 import {attestStandaloneNotionTask,claimStandaloneNotionTask,finishStandaloneNotionTask} from '../workflow-foundation/standalone-notion.js';
+import {attestBilibiliVerification,createBilibiliVerificationTask} from '../workflow-foundation/standalone-bilibili.js';
 import {reconcileFoundationTask} from '../workflow-foundation/reconcile.js';
 export function createWorkflowFoundationRouter({pool=defaultPool,services={}}={}){
  const router=Router();router.use(rateLimit(TASK_MUTATION_RATE_LIMIT_OPTIONS),internalAuthOrLoopback,json({limit:'2mb'}));
  const handle=fn=>async(req,res)=>{try{const result=await fn(req);res.status(result.created?201:200).json(result);}catch(error){res.status(error.status??500).json({error:error.code??'foundation_unavailable'});}};
+ const operator=(req,res,next)=>process.env.CECELIA_INTERNAL_TOKEN
+  ? internalAuth(req,res,next):res.status(503).json({error:'bilibili_verification_auth_unconfigured'});
  router.post('/workflows/:id/runtime-status',handle(req=>setFoundationRuntimeStatus(pool,req.params.id,req.body)));
  router.get('/catalog',handle(()=>listFoundationCatalog(pool)));
  router.post('/tasks',handle(req=>createFoundationTask(pool,req.body,services)));
  router.post('/standalone/claim',handle(req=>claimStandaloneNotionTask(pool,req.body)));
  router.post('/standalone/attest',handle(req=>attestStandaloneNotionTask(pool,req.body)));
  router.post('/standalone/finish',handle(req=>finishStandaloneNotionTask(pool,req.body)));
+ router.post('/standalone/bilibili-verify-existing',operator,handle(req=>createBilibiliVerificationTask(pool,req.body)));
+ router.post('/standalone/attest-bilibili-verify-existing',operator,handle(req=>attestBilibiliVerification(pool,req.body)));
  router.post('/claim',handle(req=>claimFoundationTask(pool,req.body,services)));
  router.post('/tasks/:id/ready',handle(req=>prepareFoundationTask(pool,req.params.id,req.body)));
  router.post('/tasks/:id/preflight-failed',handle(req=>failFoundationPreflight(pool,req.params.id,req.body)));

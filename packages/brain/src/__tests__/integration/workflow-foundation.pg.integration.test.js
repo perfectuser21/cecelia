@@ -89,6 +89,82 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
 },30000);
 
+it('B站只读任务只认固定作品和实装发布，通过原 worker 状态账保留一次原生证据',async()=>{
+ const source='android_bilibili_verify_existing',machine_id='xian-m4',bvid='BV1cLpG6cEHH';
+ fixture=await foundationHttpFixture({workflowKey:source,releaseTarget:machine_id,readonlyVerification:true});
+ const {registration,release}=await fixture.publish({environment:'production'});
+ const gate=(await fixture.request('/releases/'+release.id+'/gate')).body;
+ const request={workflow_id:registration.workflow_id,release_id:release.id,observation_id:gate.current_observation_id,bvid};
+ const path='/workflow-foundation/standalone';
+ const admit=(body=request,options)=>fixture.request(path+'/bilibili-verify-existing',body,options);
+ expect((await admit(request,{auth:false})).status).toBe(401);
+ expect((await admit({...request,bvid:'BV1cLpG6cEHJ'})).status).toBe(400);
+ expect((await admit({...request,action:'publish'})).status).toBe(400);
+ expect((await admit({...request,observation_id:randomUUID()})).status).toBe(409);
+ const pair=await Promise.all([admit(),admit()]);
+ expect(pair.map(r=>r.status).sort()).toEqual([200,201]);
+ const task=pair[0].body.task;
+ expect(pair[1].body.task.id).toBe(task.id);
+ expect(task.payload).toMatchObject({source,workflow_key:source,scope:{workflow_key:source,bvid,operation:'verify_existing'}});
+ expect((await fixture.request('/workflow-foundation/claim',{machine_id,task_id:task.id})).body).toEqual({job:null});
+ const claim=(machine_id,sources)=>fixture.request(path+'/claim',{machine_id,...(sources?{sources}:{})});
+ expect((await claim(machine_id)).body).toEqual({job:null});
+ expect((await claim('mmv',[source])).body).toEqual({job:null});
+ const claims=await Promise.all([claim(machine_id,[source]),claim(machine_id,[source])]);
+ const job=claims.find(value=>value.body.job)?.body.job;
+ expect(claims.filter(value=>value.body.job)).toHaveLength(1);
+ expect(job).toMatchObject({task_id:task.id,workflow_key:source,release_id:release.id,input:{scope:task.payload.scope,skill:task.payload.skill}});
+ const definition={...job.definition,actor:job.claimer,attempt_key:task.id+':1'};
+ const startBody={task_id:task.id,claimer:job.claimer,claimed_at:job.claimed_at,definition,standalone:job.input};
+ const start=body=>fixture.request('/runs/'+job.run_id+'/start-skill',body);
+ expect((await start({...startBody,standalone:{...job.input,scope:{...job.input.scope,bvid:'BV1cLpG6cEHJ'}}})).status).toBe(409);
+ const started=await start(startBody);
+ expect(started.status,JSON.stringify(started.body)).toBe(201);
+ const finish=receipt=>fixture.request(path+'/finish',{machine_id,receipt});
+ const receipt={task_id:task.id,run_id:job.run_id,status:'completed',summary:'原生确认本人私密作品正常播放',evidence:[]};
+ const manifest={observation:{protocol:'bilibili-verify-existing/v1',run_id:job.run_id,source_run_id:'rpa-white-bili-uid-693d858279ad',
+  owner:job.run_id,profile:'yueshengyun-work',serial:'e6c7ef34',bvid,owner_uid:'3546824935738234',
+  title:'傍晚的颜色，慢一点也很好',visibility:'private',duration_seconds:10,outward_actions:0},
+  files:Object.fromEntries(['account','author','detail','editor','settings','player'].map(key=>[key,{path:key+(key==='player'?'.png':'.xml'),sha256:'c'.repeat(64)}]))};
+ receipt.evidence=['sha256:'+digest(manifest)];
+ expect((await finish(receipt)).status).toBe(409);
+ const observedAt=new Date().toISOString();
+ const attest=proof=>fixture.request(path+'/attest-bilibili-verify-existing',{machine_id,task_id:task.id,run_id:job.run_id,
+  started_at:observedAt,ended_at:observedAt,manifest:proof});
+ expect((await attest({...manifest,observation:{...manifest.observation,outward_actions:1}})).status).toBe(400);
+ let ran=0,closed=0;
+ const saved=[],sent=[];
+ const execution=await runStandaloneWorkerOnce({machineId:machine_id,sources:[source],
+  request:async(action,body)=>action==='claim'?{job}:(await fixture.request(path+'/'+action,body)).body,
+  receipts:{pending:async()=>null,save:async value=>saved.push(value),sent:async value=>sent.push(value)},
+  provider:async()=>({
+   startHost:async()=>({connectionPath:'/scratch/provider.sock',close:async()=>{
+    closed++;
+    return {task_id:task.id,run_id:job.run_id,local_released:true,central_released:true,native_return_unknown:false};
+   }}),
+   runAgent:async()=>{ran++;},
+   verifyBusiness:async()=>{
+    expect((await attest(manifest)).body).toEqual({attested:true,evidence:receipt.evidence[0]});
+    expect((await attest(manifest)).body).toEqual({attested:true,evidence:receipt.evidence[0]});
+    expect((await finish({...receipt,evidence:['sha256:'+'0'.repeat(64)]})).status).toBe(409);
+    return {summary:receipt.summary,evidence:receipt.evidence};
+   },
+  }),
+ });
+ expect(execution).toEqual({status:'completed'});
+ expect([ran,closed]).toEqual([1,1]);
+ expect(saved).toEqual([receipt]);
+ expect(sent).toEqual([receipt]);
+ expect((await finish(receipt)).body).toEqual({status:'completed'});
+ const tasks=(await fixture.pool.query('SELECT status,result FROM tasks WHERE id=$1',[task.id])).rows;
+ expect(tasks).toMatchObject([{status:'completed',result:{bilibili_verification:{manifest},standalone_receipt:receipt}}]);
+ expect(tasks[0].result.handoff).toBeUndefined();
+ const runs=(await fixture.pool.query('SELECT status,ended_at,run_id FROM task_runs WHERE task_id=$1',[task.id])).rows;
+ expect(runs).toMatchObject([{status:'success',run_id:job.run_id,ended_at:expect.any(Date)}]);
+ const reconciliation=await fixture.request('/runs/'+job.run_id+'/reconciliation');
+ expect(reconciliation.body).toMatchObject({business_outcome:'pass',evidence_status:'verified',span_count:1,gaps:[]});
+},30000);
+
 it.each([
  ['101','douyin_video_discovery','关键词：真实事务验收\n候选上限：1'],
  ['102','douyin_video_processing','来源运行：accepted-discovery-101'],
