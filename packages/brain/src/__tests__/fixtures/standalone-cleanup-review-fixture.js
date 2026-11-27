@@ -30,7 +30,7 @@ export async function prepareDesktopCleanupReview(f, pool, serial) {
   return {...f,readLock,cleanup,seal};
 }
 
-export function prepareCollectionOpenAppTimeoutReview(f) {
+export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile } = {}) {
   const { review } = f.body;
   review.protocol = 'standalone-102-open-app-timeout-review/v1';
   review.admission_code = review.revocation.reason = 'TOOL_RESULT_UNKNOWN';
@@ -40,9 +40,16 @@ export function prepareCollectionOpenAppTimeoutReview(f) {
   const launch = [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'];
   const commands = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
     version,launch,version,foreground,version,foreground,version];
+  if (uiProfile) {
+    const ui = '/sdcard/douyin-leadgen-ui-'+uiProfile+'.xml';
+    const remove = [...target,'shell','rm','-f',ui];
+    const dump = [...target,'shell','uiautomator','dump','--compressed',ui];
+    commands.push(remove,version,dump,version,[...target,'shell','stat','-c','%s',ui],version,remove,version,dump);
+    Object.assign(f.cleanup.leaves,{complete:false,requests_returned:false});
+  }
   const fields = f.cleanup.leaves.leaves[0];
   const leaves = commands.map((argv,index)=>({...fields,sequence:index+1,pid:fields.pid+index,
-    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex')}));
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex'),code:uiProfile&&index===16?1:0}));
   f.cleanup.leaves.leaves = leaves;
   const rawLines = rows => rows.map(row=>JSON.stringify(row)).join('\n')+'\n';
   const ledger = leaves.flatMap(leaf=>{
@@ -50,6 +57,7 @@ export function prepareCollectionOpenAppTimeoutReview(f) {
     const intent = {sequence,argv_sha256,intent_at,boundary};
     return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
   });
+  if (uiProfile) ledger.push({...leaves.at(-1),phase:'unknown'});
   Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
     open_app_timeout:{
       ...f.seal(rawLines([
@@ -64,6 +72,7 @@ export function prepareCollectionOpenAppTimeoutReview(f) {
         {operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at:review.observed_at},
       ])),
       leaf_ledger:f.seal(rawLines(ledger)),
+      ...(uiProfile ? { ui_profile: uiProfile } : {}),
     },
   });
   return f;
