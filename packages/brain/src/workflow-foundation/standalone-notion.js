@@ -122,7 +122,9 @@ export async function finishStandaloneNotionTask(pool, input) {
     const status = receipt.status === 'completed' ? 'completed' : 'blocked';
     const stored = task.result.standalone_receipt;
     if (stored) {
-      const reviewedStart = task.status === 'failed' && status === 'blocked' && task.payload.source === 'notion_leadgen_101'
+      const reviewedSource = task.payload.source === 'notion_leadgen_101'
+        || task.payload.source === 'notion_leadgen_102' && receipt.reason === 'standalone_business_unconfirmed';
+      const reviewedStart = task.status === 'failed' && status === 'blocked' && reviewedSource
         && task.result.standalone_start_review?.protocol === 'standalone-start-failure-settlement/v1'
         && task.result.standalone_start_review.run_id === receipt.run_id
         && task.result.standalone_start_review?.receipt_sha256 === digest(receipt);
