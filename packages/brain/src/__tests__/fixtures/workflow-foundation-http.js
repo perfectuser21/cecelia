@@ -31,10 +31,14 @@ export async function foundationHttpFixture(options={}){
   const text=await response.text();
   return {status:response.status,body:response.headers.get('content-type')?.includes('application/json')?JSON.parse(text):{unparsed:text}};
  }
- async function publish({observe=true,environment}={}){
+ async function publish({observe=true,environment,archivedRepoRevision}={}){
   const registration=await db.register(),spec=await db.releaseSpec(registration);
   if(options.releaseTarget)spec.target=options.releaseTarget;
   if(environment!==undefined)spec.environment=environment;
+  if(archivedRepoRevision){
+   const {repo}=spec.components.find(component=>component.kind==='repo');
+   spec.components.push({kind:'repo',repo,revision:archivedRepoRevision});
+  }
   const created=await request('/releases',spec);
   if(created.status!==201)throw Error('fixture_release:'+JSON.stringify(created));
   const release=created.body.release;
