@@ -281,12 +281,18 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves) && seal.leaves.length === 9);
-  verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt));
+    && Array.isArray(seal.leaves));
   const target = ['-H','127.0.0.1','-P',socket[1],'-s',serial], version = ['version'];
-  const commands = [version,version,[...target,'get-state'],version,
+  const state = [...target,'get-state'], foregroundProbe = [...target,'shell','dumpsys','window','displays'];
+  const cleanup = [version,version,state,version,
     [...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
-    version,[...target,'shell','input','keyevent','3'],version,[...target,'shell','dumpsys','window','displays']];
+    version,[...target,'shell','input','keyevent','3'],version,foregroundProbe];
+  // 102 可在确认抖音前台后因工具缺失退出。只接受这一种完整启动序列。
+  const startup = [version,version,state,version,[...target,'shell','getprop','ro.product.model'],version,
+    [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'],version,foregroundProbe];
+  const commands = seal.leaves.length === cleanup.length ? cleanup : [...startup,...cleanup];
+  invalid(seal.leaves.length === commands.length);
+  verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt));
   return { sha256, ledgerSha256:verifyLeafLedger(ledger,seal.leaves,commands,false),
     firstIntentAt:seal.leaves[0].intent_at, leaseVersion };
 }
