@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import express from 'express';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
-import { startRun } from '../../lib/task-run.js';
+import { startRun, finishRun } from '../../lib/task-run.js';
 import { setBrainLease } from '../../lib/task-lease.js';
 import { beginBrainLaunch, finishBrainLaunch } from '../../drain.js';
 import { taskLeaseFixture, seedTask } from '../helpers/task-lease-pg-fixture.js';
@@ -75,6 +75,19 @@ describe.sequential('真实目录记账与自动执行池归属', () => {
     expect(budget.dispatchAllowed).toBe(true);
   }, 30000);
 
+  it('真实有头认领的同owner同epoch活租约也属于独立记账', async () => {
+    await claim({ leaseSeconds: 120 });
+    await claim({ payload: { headed_manual: true } });
+    expect((await calculateSlotBudget()).taskPool.used).toBe(0);
+  });
+
+  it('原生进程已终态但资源清场未确认仍不可用有头标签豁免', async () => {
+    const id = await claim(), runId = randomUUID();
+    expect((await startRun({ taskId: id, runId, source: 'native-agent', context: { native_agent: { resource_bound: true } } }, { pool: fx.pool }))?.id).toBeTruthy();
+    await finishRun({ runId, status: 'failed', result: { reason: 'fixture process exited without cleanup proof' } }, { pool: fx.pool });
+    expect((await calculateSlotBudget()).taskPool.used).toBe(1);
+  });
+
   it('真实外部worker的精确有效claim租约独立，不能仅按kind或类型放行', async () => {
     await claim({ kind: 'external-worker', taskType: 'content-pipeline', leaseSeconds: 120 });
     await claim({ kind: 'external-worker', taskType: 'content-pipeline' });
@@ -121,14 +134,16 @@ describe.sequential('真实目录记账与自动执行池归属', () => {
     expect((await calculateSlotBudget()).taskPool.used).toBe(2);
   });
 
-  it('新出现的有头记录不从旧同快照基数多减，原candidate身份漂移保持占位', async () => {
+  it.each(['owner', 'microsecond'])('新记录不从旧基数多减，原candidate漂移保持占位：%s', async mode => {
     const id = await claim();
+    if (mode === 'microsecond') await fx.pool.query("UPDATE tasks SET claimed_at='2026-11-27 00:00:00.123001+00'::timestamptz WHERE id=$1", [id]);
     const original = fx.pool.query.bind(fx.pool); let injected = false;
     vi.spyOn(fx.pool, 'query').mockImplementation(async (...args) => {
       const result = await original(...args);
       if (!injected && result.rows[0]?.independent_tasks?.length) {
         injected = true;
-        await original("UPDATE tasks SET claimed_by='new-owner' WHERE id=$1", [id]);
+        if (mode === 'owner') await original("UPDATE tasks SET claimed_by='new-owner' WHERE id=$1", [id]);
+        else await original("UPDATE tasks SET claimed_at='2026-11-27 00:00:00.123002+00'::timestamptz WHERE id=$1", [id]);
         await seedTask({ query: original }, { status: 'in_progress', executor_kind: 'headed-session', claimed_by: 'new-independent' });
       }
       return result;
