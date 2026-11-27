@@ -414,7 +414,7 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
 });
 
 
-it('102 已回桌面且零业务写入时结算原运行并解除新任务领取阻塞', async () => {
+it.each([false, true])('102 已回桌面且零业务写入时结算原运行（包含启动=%s）', async (openedApp) => {
   const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
   const next = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -422,37 +422,54 @@ it('102 已回桌面且零业务写入时结算原运行并解除新任务领取
   const began = +(await f.run()).started_at;
   const endpoint = 'tcp:127.0.0.1:5045', transport = '127.0.0.1:15555';
   const target = ['-H','127.0.0.1','-P','5045','-s',transport], version = ['version'];
-  const commands = [version,version,[...target,'get-state'],version,
+  const cleanup = [version,version,[...target,'get-state'],version,
     [...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
     version,[...target,'shell','input','keyevent','3'],version,[...target,'shell','dumpsys','window','displays']];
+  const open = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
+    [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'],version,
+    [...target,'shell','dumpsys','window','displays']];
+  const commands = openedApp ? [...open,...cleanup] : cleanup;
   const sha = value => createHash('sha256').update(value).digest('hex');
   const boundary = 'darwin-sandbox-deny-process-fork-v1';
-  const leaves = commands.map((cmd,index)=>({sequence:index+1,argv_sha256:sha(JSON.stringify(cmd)),intent_at:began,boundary,
-    pid:index+10,started_at:began,ended_at:began,code:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
-  const ledger = leaves.flatMap(leaf=>{
-    const {sequence,argv_sha256,intent_at,pid,started_at}=leaf;
-    const intent={sequence,argv_sha256,intent_at,boundary};
-    return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
-  }).map(row=>JSON.stringify(row)).join('\n')+'\n';
-  const raw = JSON.stringify({task_id:f.task.id,run_id:f.job.run_id,execution_mode:'codex-direct',
-    native_return_unknown:false,quarantine_verified:false,local_released:true,central_released:true,
-    desktop:'launcher=com.android.launcher3\nforeground_package=com.android.launcher3\nforeground=  mCurrentFocus=Window{aa u0 com.android.launcher3/.Launcher}\n',
-    leaves:{complete:true,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
-      ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
   const [device] = (await fixture.pool.query('SELECT xmin::text AS version FROM device_locks WHERE device_name=$1',[serial])).rows;
+  const proofFor = argv => {
+    const leaves = argv.map((cmd,index)=>({sequence:index+1,argv_sha256:sha(JSON.stringify(cmd)),intent_at:began,boundary,
+      pid:index+10,started_at:began,ended_at:began,code:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
+    const ledger = leaves.flatMap(leaf=>{
+      const {sequence,argv_sha256,intent_at,pid,started_at}=leaf;
+      const intent={sequence,argv_sha256,intent_at,boundary};
+      return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
+    }).map(row=>JSON.stringify(row)).join('\n')+'\n';
+    const raw = JSON.stringify({task_id:f.task.id,run_id:f.job.run_id,execution_mode:'codex-direct',
+      native_return_unknown:false,quarantine_verified:false,local_released:true,central_released:true,
+      desktop:'launcher=com.android.launcher3\nforeground_package=com.android.launcher3\nforeground=  mCurrentFocus=Window{aa u0 com.android.launcher3/.Launcher}\n',
+      leaves:{complete:true,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
+        ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
+    return {raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
+      terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}};
+  };
   const {revocation,...review}=f.body.review;
   const body={...f.body,review:{...review,protocol:'standalone-released-no-effect-review/v1',admission_code:'CLEANUP_VERIFIED_NO_BUSINESS',
-    observed_at:observedAt,local_lock:{owner:null,review_required:false},
-    cleanup_diagnostic:{raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
-      terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}}}};
+    observed_at:observedAt,local_lock:{owner:null,review_required:false},cleanup_diagnostic:proofFor(commands)}};
 
   expect((await f.reconcile(body,{auth:false})).status).toBe(401);
   const diagnostic = body.review.cleanup_diagnostic;
   expect((await f.reconcile({...body,review:{...body.review,local_lock:{owner:f.job.run_id,review_required:true}}})).status).toBe(400);
   expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,sha256:'0'.repeat(64)}}})).status).toBe(400);
-  const missingAck = ledger.trimEnd().split('\n').slice(0,-1).join('\n')+'\n';
+  const missingAck = diagnostic.terminal_ack_ledger.raw.trimEnd().split('\n').slice(0,-1).join('\n')+'\n';
   expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
     terminal_ack_ledger:{raw:missingAck,sha256:sha(missingAck)}}}})).status).toBe(400);
+  if (openedApp) {
+    const replaceCommand = (index,command) => commands.map((original,position)=>position===index?command:original);
+    for (const invalidCommands of [
+      replaceCommand(6,[...target,'shell','input','tap','100','100']),
+      replaceCommand(15,[...target,'shell','input','keyevent','4']),
+      commands.slice(1),
+      [...commands,version],
+    ]) {
+      expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:proofFor(invalidCommands)}})).status).toBe(400);
+    }
+  }
   expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
     central_lease_version:device.version+'0'}}})).status).toBe(409);
   expect(await f.state()).toMatchObject({status:'blocked'});
