@@ -5,6 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { startRun, finishRun } from '../../lib/task-run.js';
 import { setBrainLease } from '../../lib/task-lease.js';
 import { beginBrainLaunch, finishBrainLaunch } from '../../drain.js';
+import { DB_DEFAULTS } from '../../db-config.js';
+import { assertAutoPoolTestDatabase } from '../helpers/auto-pool-test-database.js';
 import { taskLeaseFixture, seedTask } from '../helpers/task-lease-pg-fixture.js';
 
 // Only external resource observations are controlled; claim HTTP, SQL and budget are real.
@@ -31,12 +33,12 @@ vi.mock('../../platform-utils.js', async importActual => ({
 
 let fx, app, calculateSlotBudget, resetBudget;
 beforeAll(async () => {
-  if (process.env.CI !== 'true' || process.env.POSTGRES_INTEGRATION !== '1'
-      || process.env.DB_NAME !== 'cecelia_scratch'
-      || !['127.0.0.1', 'localhost'].includes(process.env.DB_HOST)) {
-    throw Error('auto pool ownership requires explicit isolated scratch PostgreSQL');
-  }
+  assertAutoPoolTestDatabase(DB_DEFAULTS);
   fx = await taskLeaseFixture(); context.pool = fx.pool;
+  const identity = (await fx.pool.query('SELECT current_database() AS database, current_schema() AS schema')).rows[0];
+  expect(identity.database).toBe(DB_DEFAULTS.database);
+  expect(identity.schema).toBe(fx.schema);
+  expect(identity.schema).toMatch(/^task_lease_[a-f0-9]{32}$/);
   await fx.pool.query('CREATE TABLE workflows(id uuid PRIMARY KEY, status text); ALTER TABLE task_runs ADD COLUMN workflow_id uuid');
   const router = (await import('../../routes/task-tasks.js')).default;
   app = express().use(express.json()).use('/api/brain/tasks', router);
