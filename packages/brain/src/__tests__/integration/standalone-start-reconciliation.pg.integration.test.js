@@ -10,26 +10,27 @@ const sourceCommit = 'b'.repeat(40);
 let fixture;
 afterEach(async () => { await fixture?.close(); fixture = null; });
 
-async function blocked101({reason = 'standalone_start_unconfirmed', holdDevice = false} = {}) {
-  const workflowKey = 'douyin_video_discovery';
+async function blockedPhone({reason = 'standalone_start_unconfirmed', holdDevice = false, stage = '101'} = {}) {
+  const collection = stage === '102';
+  const workflowKey = collection ? 'douyin_video_processing' : 'douyin_video_discovery';
   fixture = await foundationHttpFixture({ workflowKey, releaseTarget: 'mmv', directInput: true });
   const { registration, release } = await fixture.publish();
   const submit = async () => {
     const notionPageId = randomUUID();
     return (await createFoundationTask(fixture.pool, {
       workflow_id: registration.workflow_id, release_id: release.id,
-      input: { binding_key: 'fixture', business: { keyword: '验收', max_candidates: 1 } },
-      idempotency_key: `notion-101:${notionPageId}`,
+      input: { binding_key: 'fixture', business: collection ? { source_run: 'fixture-video-batch' } : { keyword: '验收', max_candidates: 1 } },
+      idempotency_key: `notion-${stage}:${notionPageId}`,
     }, { notionPageId, notionTenantId: randomUUID(), notionWorkflowKey: workflowKey })).task;
   };
   const task = await submit();
-  const claim = () => fixture.request('/workflow-foundation/standalone/claim', { machine_id: machine });
+  const claim = () => fixture.request('/workflow-foundation/standalone/claim', { machine_id: machine, sources: ['notion_leadgen_'+stage] });
   const { job } = (await claim()).body;
   const start = await fixture.request(`/runs/${job.run_id}/start-skill`, {
     task_id: task.id, claimer: job.claimer, claimed_at: job.claimed_at,
     definition: { ...job.definition, attempt_key: task.id+':1', actor: job.claimer },
     standalone: {
-      scope: { workflow_key: workflowKey, source_commit: sourceCommit, approved_keywords: ['验收'], limit: 1,
+      scope: { workflow_key: workflowKey, source_commit: sourceCommit, approved_keywords: collection ? [] : ['验收'], ...(collection ? {source_run:'fixture-video-batch'} : {}), limit: 1,
         serial, line: 'fixture', company: { company_id: randomUUID(), tenant_id: task.tenant_id, version: 1, policy_id: 'fixture' } },
       skill: { name: 'douyin-leadgen-direct', version: '1.0.0', source_commit: sourceCommit, path: 'skill/SKILL.md', sha256: 'b'.repeat(64) },
     },
@@ -76,7 +77,7 @@ async function blocked101({reason = 'standalone_start_unconfirmed', holdDevice =
 }
 
 it('原单被确认拦于原生准入前，原子失败结算、并发幂等且保留原回执', async () => {
-  const f = await blocked101();
+  const f = await blockedPhone();
   expect((await f.reconcile(f.body,{auth:false})).status).toBe(401);
   expect((await f.claim()).body).toEqual({job:null});
   const replies = await Promise.all([f.reconcile(),f.reconcile()]);
@@ -97,7 +98,7 @@ it('原单被确认拦于原生准入前，原子失败结算、并发幂等且�
 },30000);
 
 it('仅接受与原 TaskRun 同一窗口的首次硬件诊断超时原件，结算仍不重试', async () => {
-  const f = await blocked101();
+  const f = await blockedPhone();
   const startedAt = (await f.run()).started_at.toISOString();
   const finishedAt = f.body.review.revocation.observed_at;
   const digestValue = 'a'.repeat(64);
@@ -143,7 +144,7 @@ it('仅接受与原 TaskRun 同一窗口的首次硬件诊断超时原件，结�
 },30000);
 
 it('拒绝他机、过期、漂移、原生效果及存活 holder/计划；末段失败回滚原 TaskRun', async () => {
-  const f = await blocked101();
+  const f = await blockedPhone();
   for (const change of [
     {...f.body,machine_id:'other'}, {...f.body,expected_attestation_sha256:'0'.repeat(64)},
     {...f.body,expected_receipt_sha256:'0'.repeat(64)}, {...f.body,blocked_at:f.job.claimed_at},
@@ -179,7 +180,7 @@ it('拒绝他机、过期、漂移、原生效果及存活 holder/计划；末�
 },30000);
 
 async function desktopCleanupReview(holdDevice = true) {
-  const f = await blocked101({reason:'standalone_cleanup_unconfirmed',holdDevice});
+  const f = await blockedPhone({reason:'standalone_cleanup_unconfirmed',holdDevice});
   const now = new Date();
   const readOnly = [['version'],['version'],['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555','get-state']];
   const makeLeaf = (args,index) => {
@@ -436,3 +437,59 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
   expect((await f.run()).status).toBe('running');
   expect((await f.readLock()).locked_by).toBe(f.task.id);
 });
+
+
+it('102 已回桌面且零业务写入时结算原运行并解除新任务领取阻塞', async () => {
+  const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
+  const next = await f.submit();
+  expect((await f.claim()).body).toEqual({job:null});
+  const observedAt = new Date().toISOString();
+  const began = +(await f.run()).started_at;
+  const endpoint = 'tcp:127.0.0.1:5045', transport = '127.0.0.1:15555';
+  const target = ['-H','127.0.0.1','-P','5045','-s',transport], version = ['version'];
+  const commands = [version,version,[...target,'get-state'],version,
+    [...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
+    version,[...target,'shell','input','keyevent','3'],version,[...target,'shell','dumpsys','window','displays']];
+  const sha = value => createHash('sha256').update(value).digest('hex');
+  const boundary = 'darwin-sandbox-deny-process-fork-v1';
+  const leaves = commands.map((cmd,index)=>({sequence:index+1,argv_sha256:sha(JSON.stringify(cmd)),intent_at:began,boundary,
+    pid:index+10,started_at:began,ended_at:began,code:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
+  const ledger = leaves.flatMap(leaf=>{
+    const {sequence,argv_sha256,intent_at,pid,started_at}=leaf;
+    const intent={sequence,argv_sha256,intent_at,boundary};
+    return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
+  }).map(row=>JSON.stringify(row)).join('\n')+'\n';
+  const raw = JSON.stringify({task_id:f.task.id,run_id:f.job.run_id,execution_mode:'codex-direct',
+    native_return_unknown:false,quarantine_verified:false,local_released:true,central_released:true,
+    desktop:'launcher=com.android.launcher3\nforeground_package=com.android.launcher3\nforeground=  mCurrentFocus=Window{aa u0 com.android.launcher3/.Launcher}\n',
+    leaves:{complete:true,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
+      ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
+  const [device] = (await fixture.pool.query('SELECT xmin::text AS version FROM device_locks WHERE device_name=$1',[serial])).rows;
+  const {revocation,...review}=f.body.review;
+  const body={...f.body,review:{...review,protocol:'standalone-released-no-effect-review/v1',admission_code:'CLEANUP_VERIFIED_NO_BUSINESS',
+    observed_at:observedAt,local_lock:{owner:null,review_required:false},
+    cleanup_diagnostic:{raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
+      terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}}}};
+
+  expect((await f.reconcile(body,{auth:false})).status).toBe(401);
+  const diagnostic = body.review.cleanup_diagnostic;
+  expect((await f.reconcile({...body,review:{...body.review,local_lock:{owner:f.job.run_id,review_required:true}}})).status).toBe(400);
+  expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,sha256:'0'.repeat(64)}}})).status).toBe(400);
+  const missingAck = ledger.trimEnd().split('\n').slice(0,-1).join('\n')+'\n';
+  expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
+    terminal_ack_ledger:{raw:missingAck,sha256:sha(missingAck)}}}})).status).toBe(400);
+  expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
+    central_lease_version:device.version+'0'}}})).status).toBe(409);
+  expect(await f.state()).toMatchObject({status:'blocked'});
+  expect(await f.run()).toMatchObject({status:'running'});
+  const first = await f.reconcile(body);
+  expect(first.status, JSON.stringify(first.body)).toBe(200);
+  expect(first.body).toMatchObject({status:'failed',retry_safe:false,replayed:false});
+  expect((await f.reconcile(body)).body).toMatchObject({status:'failed',replayed:true});
+  const replay = await f.finish();
+  expect(replay.status).toBe(200);
+  expect(replay.body).toMatchObject({status:'blocked'});
+  expect(await f.state()).toMatchObject({status:'failed',claimed_by:null,result:{standalone_receipt:f.receipt}});
+  expect(await f.run()).toMatchObject({status:'failed'});
+  expect((await f.claim()).body.job.task_id).toBe(next.id);
+},30000);
