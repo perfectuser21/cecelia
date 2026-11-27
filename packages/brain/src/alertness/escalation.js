@@ -1,4 +1,3 @@
-import { deterministicScriptSql } from '../lib/code-script-policy.js';
 /**
  * Alertness Escalation - 升级机制
  *
@@ -10,8 +9,10 @@ import { deterministicScriptSql } from '../lib/code-script-policy.js';
  */
 
 import pool from '../db.js';
+import { pauseLowPriorityTasks, cancelPendingTasks } from './queue-actions.js';
+export { buildPauseLowPriorityQuery, buildCancelPendingQuery } from './queue-actions.js';
 import { emit } from '../event-bus.js';
-import { CANCEL_EXEMPT_TYPES as _CX, ESCALATION_EXEMPT_TASK_TYPES } from '../lib/task-type-registry.js';
+import { CANCEL_EXEMPT_TYPES as _CX } from '../lib/task-type-registry.js';
 
 // ============================================================
 // 响应级别定义
@@ -278,7 +279,7 @@ async function executeAction(action) {
 
     case 'pause_low_priority': {
       // 暂停低优先级任务
-      const paused = await pauseLowPriorityTasks(action.params.priorities);
+      const paused = await pauseLowPriorityTasks(pool, action.params.priorities, SYSTEM_AUTO_TRIGGER_SOURCES);
       return { paused };
     }
 
@@ -289,7 +290,7 @@ async function executeAction(action) {
 
     case 'cancel_pending': {
       // 取消待处理任务
-      const canceled = await cancelPendingTasks(action.params.keepCritical);
+      const canceled = await cancelPendingTasks(pool, action.params.keepCritical, CANCEL_EXEMPT_TYPES, SYSTEM_AUTO_TRIGGER_SOURCES);
       return { canceled };
     }
 
@@ -340,102 +341,10 @@ async function updateTickInterval(factor) {
   return newInterval;
 }
 
-/**
- * 构造 pause_low_priority 的 UPDATE 语句（抽成纯函数以便真库 PREPARE 守卫）。
- * $3 处处显式 ::text，同 buildCancelPendingQuery——2026-08-05 修 cancel_pending
- * 时发现本函数有一模一样的裸 $3 双上下文隐患（只是尚未触发到 L1 优雅降级），
- * 一并修掉，避免留下同源哑弹。
- */
-export function buildPauseLowPriorityQuery() {
-  return `
-      UPDATE tasks
-      SET status = 'paused',
-          error_message = $3::text,
-          status_history = status_history || jsonb_build_array(
-            jsonb_build_object('from', status, 'to', 'paused', 'changed_at', NOW(), 'source', $3::text)
-          ),
-          updated_at = NOW()
-      WHERE status IN ('queued', 'pending')
-        AND priority = ANY($1)
-        AND trigger_source = ANY($2)
-        AND NOT (task_type = ANY($4::text[]))
-        AND NOT ${deterministicScriptSql('tasks')}
-      RETURNING id
-    `;
-}
-
-async function pauseLowPriorityTasks(priorities) {
-  const client = await pool.connect();
-  try {
-    // 白名单：active Initiative 的子工作流 + 内容 pipeline 关键步骤。
-    // 这些任务属于"当前关键路径"，不是背景 P2/P3，必须豁免 pause。
-    // harness_* 系列：harness v2 DAG 的 Initiative / Planner / Contract /
-    // Generator / Evaluator 等阶段任务（upsertTaskPlan 默认创建为 P0，
-    // 但此处做 task_type 层双保险，避免未来误改回 P2 再次踩坑）。
-    //
-    // trigger_source = ANY($3)：只准碰系统自产任务（见 SYSTEM_AUTO_TRIGGER_SOURCES 注释），
-    // 用户/人工注册的任务（manual/user*/owner_input 等）天然不在白名单内，不会被 pause。
-    const result = await client.query(buildPauseLowPriorityQuery(), [priorities, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_graceful_degrade', [...ESCALATION_EXEMPT_TASK_TYPES]]);
-
-    console.log(`[Escalation] Paused ${result.rowCount} low priority tasks`);
-    return result.rowCount;
-  } finally {
-    client.release();
-  }
-}
-
 async function stopDispatch() {
   // 发送事件通知 tick 模块停止派发
   emit('escalation:stop_dispatch');
   console.log('[Escalation] Task dispatch stopped');
-}
-
-/**
- * 构造 cancel_pending 的 UPDATE 语句（抽成纯函数以便真库 PREPARE 守卫）。
- *
- * 2026-07-09 修复(Issue 9db1da44)：不再 SET status = 'canceled'（终态，
- * 一旦误伤无法恢复），改为可逆的 'paused'，并加 trigger_source 白名单
- * 过滤（只碰系统自产任务）+ error_message/status_history 留痕。
- * jsonb_build_object 里的 'status' 引用的是 UPDATE 前的旧值（Postgres
- * SET 子句求值语义），天然拿到正确的 from。
- *
- * 2026-08-05 修复：$3 必须处处显式 ::text。它同时出现在 error_message（text
- * 上下文）与 jsonb_build_object 的实参（形参声明为 "any"）——后者给不出任何
- * 类型线索，Postgres 于 PREPARE 阶段即报 could not determine data type of
- * parameter $3，导致熔断只停了派发、没能暂停待处理任务。
- * 同源事故见 autoblock-sql-integration.test.js（上次是 $2）。
- */
-export function buildCancelPendingQuery(keepCritical) {
-  let query = `
-      UPDATE tasks
-      SET status = 'paused',
-          error_message = $3::text,
-          status_history = status_history || jsonb_build_array(
-            jsonb_build_object('from', status, 'to', 'paused', 'changed_at', NOW(), 'source', $3::text)
-          ),
-          updated_at = NOW()
-      WHERE status IN ('queued', 'pending')
-        AND NOT (task_type = ANY($1))
-        AND trigger_source = ANY($2)
-    `;
-
-  if (keepCritical) {
-    query += ` AND priority != 'P0'`;
-  }
-
-  return query + ` RETURNING id`;
-}
-
-async function cancelPendingTasks(keepCritical) {
-  const client = await pool.connect();
-  try {
-    const query = buildCancelPendingQuery(keepCritical);
-    const result = await client.query(query, [CANCEL_EXEMPT_TYPES, SYSTEM_AUTO_TRIGGER_SOURCES, 'escalation_emergency_brake']);
-    console.log(`[Escalation] Paused (was: canceled) ${result.rowCount} pending tasks`);
-    return result.rowCount;
-  } finally {
-    client.release();
-  }
 }
 
 async function enableSafeMode() {

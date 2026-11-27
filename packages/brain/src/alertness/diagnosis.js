@@ -111,7 +111,7 @@ const ANOMALY_PATTERNS = {
       const recentQueues = history.slice(-3).map(h => h.metrics?.queueDepth?.value || 0);
       recentQueues.push(metrics.queueDepth.value);
 
-      // 阈值 60：队列深度包含 goal_id=NULL 的任务（dispatch 看不见），30 太容易误报
+      // 阈值60保持：指标统计tick归属候选量，不把人工记账当作执行压力。
       return recentQueues.every(depth => depth > 60);
     }
   }

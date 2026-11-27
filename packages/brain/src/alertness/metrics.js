@@ -12,6 +12,8 @@
 import os from 'os';
 import pool, { getPoolHealth } from '../db.js';
 import { evaluateCpuHealth } from '../platform-utils.js';
+import { tickTaskOwnershipSql } from '../lib/tick-task-ownership.js';
+import { TICK_DISPATCH_EXCLUDED } from '../lib/task-type-registry.js';
 
 // ============================================================
 // 阈值定义
@@ -314,7 +316,8 @@ async function getQueueDepth() {
       SELECT COUNT(*) as count
       FROM tasks
       WHERE status IN ('queued', 'pending')
-    `);
+        AND ${tickTaskOwnershipSql('tasks', 1)}
+    `, [[...TICK_DISPATCH_EXCLUDED]]);
 
     return parseInt(result.rows[0].count, 10);
   } catch (error) {

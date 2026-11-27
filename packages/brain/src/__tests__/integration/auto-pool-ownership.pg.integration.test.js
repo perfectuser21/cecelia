@@ -75,12 +75,16 @@ describe.sequential('队列压力只计算现役tick归属需求', () => {
   it('超过60条真正自动需求仍按原阈值触发队列保护，代码和原生任务也计入', async () => {
     const workflow = randomUUID();
     await fx.pool.query("INSERT INTO workflows(id,status) VALUES($1,'active')", [workflow]);
-    for (let i = 0; i < 62; i++) {
+    for (let i = 0; i < 60; i++) {
       await seedTask(fx.pool, { task_type: i % 2 ? 'qiumi_task' : 'script_run',
         payload: i % 2 ? {} : { runtime_requires_llm: false, workflow_id: workflow } });
     }
+    const boundary = await queueMetric();
+    expect(boundary.value).toBe(60);
+    expect((await queueDiagnosis(boundary)).issues).not.toContain('queue_blockage');
+    await seedTask(fx.pool, { task_type: 'qiumi_task' });
     const metric = await queueMetric();
-    expect(metric.value).toBe(62);
+    expect(metric.value).toBe(61);
     expect((await queueDiagnosis(metric)).issues).toContain('queue_blockage');
   });
 

@@ -1,6 +1,8 @@
 # Cecelia 定义文档
 
-**Brain 版本**: 1.445.332
+**Brain 版本**: 1.445.333
+
+警觉指标的队列深度按现役 Tick 归属统计 queued/pending 候选；人工记账与专属消费者任务不再形成自动执行压力。低优先级降级暂停复用相同归属边界，既有阈值、正式代码豁免及紧急制动策略保留。
 
 Nightly 的三处真实 PG 合同按现役 Codex Agent 路由核对。退役 coding_workflow 领单返回 410 且不创建租约；现役受保护类型继续禁止外部 worker 完成。普通开发任务与不可变回执按 codex_dev / agent_development / codex-bridge 原子登记，生产路由实现不变。
 

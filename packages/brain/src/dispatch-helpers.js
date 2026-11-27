@@ -16,6 +16,7 @@ import { verificationTaskSql } from './lib/commander-verification-transport.js';
 
 import pool from './db.js';
 import { deterministicScriptSql } from './lib/code-script-policy.js';
+import { tickTaskOwnershipSql } from './lib/tick-task-ownership.js';
 import { updateTask, createTask } from './actions.js';
 import { finalizeTask } from './lib/task-terminal.js';
 import { sortTasksByWeight } from './task-weight.js';
@@ -92,24 +93,7 @@ export async function selectNextDispatchableTask(goalIds, excludeIds = [], optio
     FROM tasks t
     WHERE ${goalCondition}
       AND t.status = 'queued'
-      AND t.claimed_by IS NULL
-      -- Explicit common runner tasks belong to the HTTP completion job, never a legacy executor.
-      AND NOT COALESCE(t.payload ? 'common_runner',false)
-      -- headed_manual 消费语义（task 94ee0ec4，铁律 9f14c074）：建单方标记
-      -- payload.headed_manual=true（jsonb 布尔或字符串 'true' 均识别，payload->>
-      -- 对两种写法都返回文本 'true'）的任务留给有头人工执行，不进无头自动派发。
-      -- 只做收窄/排除（NFR：不放宽探测/派发基底谓词）。
-      AND COALESCE(t.payload->>'headed_manual', 'false') <> 'true'
-      -- payload.parallel_worker=true 是 worker 池专属(worker-pool-dispatch.js 扫描),
-      -- kernel tick 禁抢——09-06 金丝雀实证 tick(2min)必快过 worker-pool(5min gate)
-      AND COALESCE(t.payload->>'parallel_worker', 'false') <> 'true'
-      -- device_job = 安卓工作机（手机）的活，执行体是 Mac 上的领单器 + adb，不是 LLM。
-      -- 本谓词是**黑名单制**（没有白名单），device_job 一旦 queued 就会被 2 分钟一轮的
-      -- tick 抢去派给执行体真的"跑一轮采收"：既烧模型配额，又直接撞 invariant 96054a8b
-      -- （us-vps 零执行），且永远不会完成，会堆成僵尸触发 eviction/requeue 循环。
-      -- 这是第二道闸；第一道是建单强制 payload.headed_manual=true（上面那条谓词）。
-      -- 两道闸缺一不可，见 __tests__/device-job-foundation.test.js 的变异清单。
-      AND NOT (t.task_type = ANY($${excludedTypesIdx}::text[]))
+      AND ${tickTaskOwnershipSql('t', excludedTypesIdx)}
       ${excludeClause}
       ${onlyTypesClause}
       AND (
