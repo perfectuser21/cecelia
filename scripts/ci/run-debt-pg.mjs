@@ -11,10 +11,12 @@ const { Client } = require('pg');
 export const readManifest = (repositoryRoot = root) => {
   const realRoot = realpathSync(repositoryRoot);
   const manifest = JSON.parse(readFileSync(join(realRoot, 'scripts/ci/debt-pg-tests.json'), 'utf8'));
-  if (manifest.schema_version !== 1 || !Array.isArray(manifest.tests) || !manifest.tests.length) throw Error('private PG manifest empty/invalid');
+  if (!manifest || Object.keys(manifest).some(key => !['schema_version', 'tests'].includes(key))
+      || manifest.schema_version !== 1 || !Array.isArray(manifest.tests) || !manifest.tests.length) throw Error('private PG manifest empty/invalid');
   const seen = new Set();
   for (const row of manifest.tests) {
-    if (!/^(packages\/brain\/src\/|tests\/regression\/)[-A-Za-z0-9_./]+\.(test|spec)\.[cm]?[jt]s$/.test(row.path)
+    if (!row || Object.keys(row).some(key => !['path', 'mode', 'status', 'default'].includes(key))
+        || ('default' in row && typeof row.default !== 'boolean') || !/^(packages\/brain\/src\/|tests\/regression\/)[-A-Za-z0-9_./]+\.(test|spec)\.[cm]?[jt]s$/.test(row.path)
         || row.path.split('/').includes('..') || seen.has(row.path) || !['full', 'empty'].includes(row.mode) || !['ready', 'pending'].includes(row.status)) throw Error('private PG manifest invalid row');
     seen.add(row.path);
     const file = resolve(realRoot, row.path);
@@ -32,7 +34,7 @@ export function testEnvironment(backend, directory) {
 
 export async function runPrivatePg({ nativeBin, files = [], includePending = false, output = join(root, 'artifacts', 'debt-pg-results.json') } = {}) {
   const manifest = readManifest();
-  const rows = manifest.tests.filter(row => (row.status === 'ready' || includePending) && (!files.length || files.includes(row.path)));
+  const rows = manifest.tests.filter(row => (row.status === 'ready' || includePending) && (files.length ? files.includes(row.path) : row.default !== false));
   if (!rows.length || files.some(path => !rows.some(row => row.path === path))) throw Error('no eligible private PG tests or unknown requested file');
   const backend = await startPrivatePg({ nativeBin });
   const admin = new Client(backend.config);
@@ -74,7 +76,8 @@ export async function runPrivatePg({ nativeBin, files = [], includePending = fal
     for (let index = 0; index < rows.length; index++) {
       const row = rows[index], directory = join(backend.directory, `case-${index}`);
       mkdirSync(directory); mkdirSync(join(directory, 'home')); mkdirSync(join(directory, 'tmp'));
-      const env = { ...testEnvironment(backend, directory), CECELIA_PRIVATE_PG_INCLUDE_PENDING: includePending ? '1' : '0' }, receipt = join(directory, 'vitest.json');
+      const env = { ...testEnvironment(backend, directory), CECELIA_PRIVATE_PG_INCLUDE_PENDING: includePending ? '1' : '0',
+        CECELIA_PRIVATE_PG_EXPLICIT_FILES: files.length ? '1' : '0' }, receipt = join(directory, 'vitest.json');
       let tests = 0, failure, details;
       try {
         await create();
