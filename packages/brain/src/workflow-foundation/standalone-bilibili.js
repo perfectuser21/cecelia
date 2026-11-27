@@ -1,5 +1,6 @@
 import {createRoutedTask} from '../work-routing-store.js';
 import {digest} from '../orchestrator/commander-decision.js';
+import {getRelease} from '../lib/release-index.js';
 import {getRunDefinitionBinding} from '../lib/run-definition-binding.js';
 import {normalizeSpan,writeSpans} from '../lib/span-ingestion.js';
 import {FOUNDATION_PROTOCOL,UUID,onlyKeys,requireFoundation} from './contracts.js';
@@ -27,15 +28,20 @@ const hash=/^[a-f0-9]{64}$/;
 export async function resolveBilibiliVerification(db,input) {
   const fixed=await resolveStandaloneRelease(db,input,source,{target:machine,machineId:machine});
   const {release,workflow}=fixed;
-  const provider=release.payload.components.find(component=>component.kind==='code'&&component.repo===providerRepo
+  const {environment}=release;
+  const components=release.payload.components;
+  const provider=components.find(component=>component.kind==='code'&&component.repo===providerRepo
     && component.path===providerPath && component.revision===workflow.source_commit
     && /^sha256:[a-f0-9]{64}$/.test(component.digest));
-  requireFoundation(release.environment==='production' && fixed.definition.observation_id===input.observation_id
+  requireFoundation((environment==='production'||environment==='staging:'+workflow.source_commit)
+    && fixed.definition.observation_id===input.observation_id
+    && components.some(component=>component.kind==='repo')
+    && components.every(component=>component.repo===providerRepo&&component.revision===workflow.source_commit)
     && workflow.payload.contract?.source?.repo===providerRepo && /^[a-f0-9]{40}$/.test(workflow.source_commit)
     && workflow.payload.contract.runtime?.entrypoint===operation && workflow.payload.activities.length===1
     && workflow.payload.activities[0].slot_key===operation && fixed.definition.expected_path.length===1
     && provider,'bilibili_verification_release_invalid');
-  const scope={...approved,workflow_key:source,operation,source_commit:workflow.source_commit,limit:1};
+  const scope={...approved,workflow_key:source,operation,environment,source_commit:workflow.source_commit,limit:1};
   const skill={name:'android-bilibili-verify-existing',version:workflow.payload.contract.version,
     source_commit:workflow.source_commit,path:providerPath,sha256:provider.digest.slice(7)};
   requireFoundation(typeof skill.version==='string'&&skill.version.length>0,'bilibili_verification_release_invalid');
@@ -44,8 +50,10 @@ export async function resolveBilibiliVerification(db,input) {
 
 export async function createBilibiliVerificationTask(pool,input) {
   onlyKeys(input,['workflow_id','release_id','observation_id','bvid']);
-  requireFoundation(UUID.test(input.observation_id??'')&&input.bvid===approved.bvid,'bilibili_verification_scope_invalid',400);
-  const sourceId='foundation:android-bilibili-verify-existing:'+approved.source_run_id;
+  requireFoundation([input.workflow_id,input.release_id,input.observation_id].every(value=>UUID.test(value??''))
+    &&input.bvid===approved.bvid,'bilibili_verification_scope_invalid',400);
+  const requestedRelease=await getRelease(pool,input.release_id);
+  const sourceId='foundation:android-bilibili-verify-existing:'+approved.source_run_id+':'+requestedRelease.environment;
   const requestHash=digest(input);
   return foundationTransaction(pool,sourceId,async db=>{
     const existing=(await db.query("SELECT * FROM tasks WHERE payload#>>'{foundation_request,source_id}'=$1",[sourceId])).rows[0];

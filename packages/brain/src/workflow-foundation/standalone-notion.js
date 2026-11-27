@@ -14,19 +14,23 @@ const boundSource = `payload->>'source' IN (${standaloneSourceList}) AND task_ty
 const boundWorkerSource = `payload->>'source' IN (${standaloneWorkerSourceList}) AND task_type='workflow_dispatch'`;
 
 export async function claimStandaloneNotionTask(pool, input) {
-  validateMachineRequest(input, ['machine_id','sources']);
+  validateMachineRequest(input, ['machine_id','sources','task_id']);
   const sources = input.sources ?? [standaloneSources[0]];
   requireFoundation(Array.isArray(sources) && sources.length > 0 && sources.length <= standaloneWorkerSources.length
     && new Set(sources).size === sources.length && sources.every(source => standaloneWorkerSources.includes(source)), 'standalone_worker_sources_invalid', 400);
+  const exactVerification=sources.length===1&&sources[0]===bilibiliVerificationSource;
+  requireFoundation(exactVerification ? UUID.test(input.task_id??'')
+    : input.task_id===undefined&&!sources.includes(bilibiliVerificationSource), 'standalone_worker_task_scope_invalid',400);
   const machine = input.machine_id;
   return foundationTransaction(pool, 'notion-standalone:' + machine, async db => {
     // 103 has no phone resources. A review hold on the handset must not reserve the scorer.
     const row = (await db.query(`SELECT candidate.* FROM tasks candidate WHERE ${boundWorkerSource} AND status='queued' AND claimed_by IS NULL
       AND payload#>>'{foundation_request,machine_id}'=$1 AND payload->>'source'=ANY($2::text[])
+      AND ($4::uuid IS NULL OR candidate.id=$4::uuid)
       AND NOT EXISTS (SELECT 1 FROM tasks active WHERE ${boundWorkerSource}
         AND active.result#>>'{standalone_claim,machine_id}'=$1 AND active.status IN ('in_progress','blocked')
         AND (active.payload->>'source'=$3)=(candidate.payload->>'source'=$3))
-      ORDER BY created_at,id LIMIT 1 FOR UPDATE OF candidate SKIP LOCKED`, [machine,sources,'notion_leadgen_103'])).rows[0];
+      ORDER BY created_at,id LIMIT 1 FOR UPDATE OF candidate SKIP LOCKED`, [machine,sources,'notion_leadgen_103',input.task_id??null])).rows[0];
     if (!row) return { job: null };
 
     const stage = row.payload.source.slice(-3);

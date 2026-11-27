@@ -89,10 +89,10 @@ it('同一 Notion 页并发仅登记一个轻量任务并保留租户与原页�
  await expect(submit(input,{...source,notionTenantId:'other'})).rejects.toMatchObject({code:'foundation_idempotency_conflict'});
 },30000);
 
-it('B站只读任务只认固定作品和实装发布，通过原 worker 状态账保留一次原生证据',async()=>{
+it.each(['production','staging:'+'b'.repeat(40)])('B站只读任务在%s通过原 worker 状态账保留一次原生证据',async environment=>{
  const source='android_bilibili_verify_existing',machine_id='xian-m4',bvid='BV1cLpG6cEHH';
  fixture=await foundationHttpFixture({workflowKey:source,releaseTarget:machine_id,readonlyVerification:true});
- const {registration,release}=await fixture.publish({environment:'production'});
+ const {registration,release}=await fixture.publish({environment});
  const gate=(await fixture.request('/releases/'+release.id+'/gate')).body;
  const request={workflow_id:registration.workflow_id,release_id:release.id,observation_id:gate.current_observation_id,bvid};
  const path='/workflow-foundation/standalone';
@@ -105,12 +105,14 @@ it('B站只读任务只认固定作品和实装发布，通过原 worker 状态�
  expect(pair.map(r=>r.status).sort()).toEqual([200,201]);
  const task=pair[0].body.task;
  expect(pair[1].body.task.id).toBe(task.id);
- expect(task.payload).toMatchObject({source,workflow_key:source,scope:{workflow_key:source,bvid,operation:'verify_existing'}});
+ expect(task.payload).toMatchObject({source,workflow_key:source,scope:{workflow_key:source,bvid,operation:'verify_existing',environment}});
  expect((await fixture.request('/workflow-foundation/claim',{machine_id,task_id:task.id})).body).toEqual({job:null});
- const claim=(machine_id,sources)=>fixture.request(path+'/claim',{machine_id,...(sources?{sources}:{})});
+ const claim=(machine_id,sources,task_id)=>fixture.request(path+'/claim',{machine_id,sources,task_id});
  expect((await claim(machine_id)).body).toEqual({job:null});
- expect((await claim('mmv',[source])).body).toEqual({job:null});
- const claims=await Promise.all([claim(machine_id,[source]),claim(machine_id,[source])]);
+ expect((await claim(machine_id,[source])).status).toBe(400);
+ expect((await claim(machine_id,[source],randomUUID())).body).toEqual({job:null});
+ expect((await claim('mmv',[source],task.id)).body).toEqual({job:null});
+ const claims=await Promise.all([claim(machine_id,[source],task.id),claim(machine_id,[source],task.id)]);
  const job=claims.find(value=>value.body.job)?.body.job;
  expect(claims.filter(value=>value.body.job)).toHaveLength(1);
  expect(job).toMatchObject({task_id:task.id,workflow_key:source,release_id:release.id,input:{scope:task.payload.scope,skill:task.payload.skill}});
@@ -134,8 +136,14 @@ it('B站只读任务只认固定作品和实装发布，通过原 worker 状态�
  expect((await attest({...manifest,observation:{...manifest.observation,outward_actions:1}})).status).toBe(400);
  let ran=0,closed=0;
  const saved=[],sent=[];
- const execution=await runStandaloneWorkerOnce({machineId:machine_id,sources:[source],
-  request:async(action,body)=>action==='claim'?{job}:(await fixture.request(path+'/'+action,body)).body,
+ const execution=await runStandaloneWorkerOnce({machineId:machine_id,sources:[source],taskId:task.id,
+  request:async(action,body)=>{
+   if(action==='claim'){
+    expect(body).toEqual({machine_id,sources:[source],task_id:task.id});
+    return {job};
+   }
+   return (await fixture.request(path+'/'+action,body)).body;
+  },
   receipts:{pending:async()=>null,save:async value=>saved.push(value),sent:async value=>sent.push(value)},
   provider:async()=>({
    startHost:async()=>({connectionPath:'/scratch/provider.sock',close:async()=>{
@@ -163,6 +171,35 @@ it('B站只读任务只认固定作品和实装发布，通过原 worker 状态�
  expect(runs).toMatchObject([{status:'success',run_id:job.run_id,ended_at:expect.any(Date)}]);
  const reconciliation=await fixture.request('/runs/'+job.run_id+'/reconciliation');
  expect(reconciliation.body).toMatchObject({business_outcome:'pass',evidence_status:'verified',span_count:1,gaps:[]});
+},30000);
+
+it('B站候选与生产各限一单，候选环境必须完全匹配冻结来源 SHA',async()=>{
+ const source='android_bilibili_verify_existing',machine_id='xian-m4';
+ fixture=await foundationHttpFixture({workflowKey:source,releaseTarget:machine_id,readonlyVerification:true});
+ const candidate='staging:'+'b'.repeat(40);
+ const path='/workflow-foundation/standalone/bilibili-verify-existing';
+ const intake=async environment=>{
+  const {registration,release}=await fixture.publish({environment});
+  const gate=(await fixture.request('/releases/'+release.id+'/gate')).body;
+  return {workflow_id:registration.workflow_id,release_id:release.id,observation_id:gate.current_observation_id,bvid:'BV1cLpG6cEHH'};
+ };
+ for(const environment of ['staging','staging:'+'a'.repeat(40)]){
+  expect((await fixture.request(path,await intake(environment))).status).toBe(409);
+ }
+ const stage=await intake(candidate);
+ const accepted=await fixture.request(path,stage);
+ expect(accepted.status,JSON.stringify(accepted.body)).toBe(201);
+ expect(accepted.body.task.payload.scope).toMatchObject({environment:candidate,source_commit:'b'.repeat(40)});
+ expect((await fixture.request(path,stage)).body.task.id).toBe(accepted.body.task.id);
+ expect((await fixture.request(path,await intake(candidate))).status).toBe(409);
+ const production=await intake('production');
+ const active=await fixture.request(path,production);
+ expect(active.status).toBe(201);
+ expect(active.body.task.id).not.toBe(accepted.body.task.id);
+ expect(active.body.task.payload.scope.environment).toBe('production');
+ expect((await fixture.request(path,production)).body.task.id).toBe(active.body.task.id);
+ const rows=(await fixture.pool.query("SELECT id FROM tasks WHERE payload->>'source'=$1",[source])).rows;
+ expect(rows).toHaveLength(2);
 },30000);
 
 it.each([

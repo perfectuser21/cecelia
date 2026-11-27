@@ -7,3 +7,5 @@ GP-Anchor: none(infra)
   Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
 - [x] 同一运行的只读原生清单归档为一个 Activity span，原 worker 单次结算，未证实或证据不匹配拒绝完成。
   Test: manual:cd packages/brain && npx --no-install vitest run --config vitest.integration.config.js src/__tests__/integration/workflow-foundation.pg.integration.test.js
+- [x] 仅放行与冻结来源 SHA 一致的 staging 环境。候选与生产各限一单，固定任务 worker 拒绝其他任务的领取结果和待发回执。
+  Test: manual:cd packages/brain && npx --no-install vitest run scripts/standalone-skill/worker.test.mjs
