@@ -14,7 +14,7 @@ const context = vi.hoisted(() => ({ pool: null, processes: [], registryError: fa
 vi.mock('../../db.js', () => ({ default: {
   query: (...args) => context.pool.query(...args),
   connect: (...args) => context.pool.connect(...args),
-} }));
+}, getPoolHealth: () => ({ total: 1, idle: 1, waiting: 0 }) }));
 vi.mock('../../executor.js', () => ({
   MAX_SEATS: 11, PHYSICAL_CAPACITY: 11,
   getEffectiveMaxSeats: () => 11,
@@ -39,11 +39,77 @@ beforeAll(async () => {
   expect(identity.database).toBe(DB_DEFAULTS.database);
   expect(identity.schema).toBe(fx.schema);
   expect(identity.schema).toMatch(/^task_lease_[a-f0-9]{32}$/);
-  await fx.pool.query('CREATE TABLE workflows(id uuid PRIMARY KEY, status text); ALTER TABLE task_runs ADD COLUMN workflow_id uuid');
+  await fx.pool.query(`CREATE TABLE workflows(id uuid PRIMARY KEY, status text);
+    ALTER TABLE task_runs ADD COLUMN workflow_id uuid;
+    ALTER TABLE tasks ADD COLUMN trigger_source text;
+    CREATE TABLE alertness_escalations(id serial PRIMARY KEY, timestamp timestamptz, actions_taken jsonb)`);
   const router = (await import('../../routes/task-tasks.js')).default;
   app = express().use(express.json()).use('/api/brain/tasks', router);
   const budget = await import('../../slot-allocator.js');
   calculateSlotBudget = budget.calculateSlotBudget; resetBudget = budget._resetSlotBuffer;
+});
+
+describe.sequential('队列压力只计算现役tick归属需求', () => {
+  async function queueMetric() {
+    return (await (await import('../../alertness/metrics.js')).collectMetrics()).queueDepth;
+  }
+
+  async function queueDiagnosis(queueDepth) {
+    const { diagnoseProblem } = await import('../../alertness/diagnosis.js');
+    const sample = { queueDepth };
+    return diagnoseProblem(sample, Array.from({ length: 3 }, () => ({ metrics: sample })));
+  }
+
+  it('超过60个人工记账加2条真实自动需求不误报队列阻塞', async () => {
+    for (let i = 0; i < 72; i++) {
+      await seedTask(fx.pool, { payload: { headed_manual: i % 2 ? true : 'true' } });
+    }
+    await seedTask(fx.pool, { task_type: 'research' });
+    await seedTask(fx.pool, { task_type: 'script_run' });
+    expect((await fx.pool.query("SELECT count(*)::int AS n FROM tasks WHERE status='queued'")).rows[0].n).toBe(74);
+    const metric = await queueMetric();
+    expect(metric.value).toBe(2);
+    expect((await queueDiagnosis(metric)).issues).not.toContain('queue_blockage');
+  });
+
+  it('超过60条真正自动需求仍按原阈值触发队列保护，代码和原生任务也计入', async () => {
+    const workflow = randomUUID();
+    await fx.pool.query("INSERT INTO workflows(id,status) VALUES($1,'active')", [workflow]);
+    for (let i = 0; i < 62; i++) {
+      await seedTask(fx.pool, { task_type: i % 2 ? 'qiumi_task' : 'script_run',
+        payload: i % 2 ? {} : { runtime_requires_llm: false, workflow_id: workflow } });
+    }
+    const metric = await queueMetric();
+    expect(metric.value).toBe(62);
+    expect((await queueDiagnosis(metric)).issues).toContain('queue_blockage');
+  });
+
+  it('明确非tick归属边界与原NULL认领语义一致，未知类型保守计入', async () => {
+    for (const payload of [{ headed_manual: true }, { headed_manual: 'true' },
+      { parallel_worker: true }, { parallel_worker: 'true' }, { common_runner: null }]) {
+      await seedTask(fx.pool, { payload });
+    }
+    await seedTask(fx.pool, { task_type: 'project' });
+    await seedTask(fx.pool, { claimed_by: 'fixture-owned' });
+    await seedTask(fx.pool, { claimed_by: '' });
+    await seedTask(fx.pool, { task_type: 'unknown-future-automatic' });
+    await seedTask(fx.pool, { status: 'pending', task_type: 'research' });
+    expect((await queueMetric()).value).toBe(2);
+  });
+
+  it('真实降级UPDATE不得暂停明确人工记账，普通自动任务仍暂停并留痕', async () => {
+    const manual = await seedTask(fx.pool, { payload: { headed_manual: true } });
+    const automatic = await seedTask(fx.pool, { task_type: 'research' });
+    await fx.pool.query("UPDATE tasks SET priority='P2',trigger_source='api' WHERE id=ANY($1)", [[manual, automatic]]);
+    const { executeResponse } = await import('../../alertness/escalation.js');
+    await executeResponse({ actions: [{ type: 'pause_low_priority', params: { priorities: ['P2', 'P3'] } }] });
+    const rows = (await fx.pool.query('SELECT id,status,error_message,status_history FROM tasks ORDER BY id')).rows;
+    expect(rows.find(row => row.id === manual).status).toBe('queued');
+    expect(rows.find(row => row.id === automatic)).toMatchObject({ status: 'paused', error_message: 'escalation_graceful_degrade' });
+    expect(rows.find(row => row.id === automatic).status_history.at(-1)).toMatchObject({
+      from: 'queued', to: 'paused', source: 'escalation_graceful_degrade',
+    });
+  });
 });
 beforeEach(async () => {
   context.processes = []; context.registryError = false; resetBudget();
