@@ -50,6 +50,7 @@ export function commandsFor(component, shard) {
           'src/__tests__/integration/staging-snapshot.pg.integration.test.js',
           'src/__tests__/integration/drain-process-scope.pg.integration.test.js',
           'src/__tests__/integration/executor-startup-headed-owner.pg.integration.test.js',
+          'src/__tests__/integration/auto-pool-ownership.pg.integration.test.js',
           'src/__tests__/integration/suggestion-plan-callback.pg.integration.test.js',
           'src/__tests__/integration/managed-script-profile.pg.integration.test.js',
           'src/__tests__/integration/workflow-common-terminal.pg.integration.test.js',
