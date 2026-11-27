@@ -1,7 +1,8 @@
 /** 独立 Skill 的登记入口：复用既有固定起跑事务，不派发模型或业务。 */
 import {UUID,evidenceHash,evidenceObject,evidenceText,getRelease,requireEvidence} from './release-index.js';
 import {startRun} from './task-run.js';
-import {standaloneSources} from '../workflow-foundation/standalone-source.js';
+import {bilibiliVerificationSource,standaloneSources} from '../workflow-foundation/standalone-source.js';
+import {resolveBilibiliVerification} from '../workflow-foundation/standalone-bilibili.js';
 const SHA=/^[a-f0-9]{40}$/,HASH=/^[a-f0-9]{64}$/;
 const definitionFields=['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256','runtime_snapshot_sha256','expected_path','attempt_key','actor'];
 const conflict=(ok,message)=>requireEvidence(ok,message,'SKILL_START_AUTHORITY',409);
@@ -25,12 +26,21 @@ export async function startStandaloneSkillRun(pool,runId,input){
   const reservation=task.result?.standalone_claim;
   const source=task.payload?.source;
   const notion=standaloneSources.includes(source);
+  const verification=source===bilibiliVerificationSource;
   if(input.standalone!==undefined)evidenceObject(input.standalone,['scope','skill']);
-  conflict(notion===Boolean(input.standalone),'起跑来源与独立Skill授权不符');
+  conflict((notion||verification)===Boolean(input.standalone),'起跑来源与独立Skill授权不符');
   const scope=input.standalone?.scope??task.payload?.scope,skill=input.standalone?.skill??task.payload?.skill;
   conflict((notion||task.payload?.execution_mode==='standalone-skill')&&skillValid(skill)&&scope&&typeof scope==='object'&&!Array.isArray(scope)
    &&(scope.task_id===undefined||scope.task_id===task.id),'任务不是完整的独立Skill授权');
-  if(notion){
+  if(verification){
+   const fixed=await resolveBilibiliVerification(client,task.payload.workflow_definition);
+   conflict(reservation?.run_id===runId&&reservation.claimer===input.claimer&&reservation.machine_id===fixed.machine_id
+    &&evidenceHash(reservation.definition)===evidenceHash(fixed.definition)
+    &&evidenceHash(definition)===evidenceHash({...fixed.definition,attempt_key:task.id+':1',actor:input.claimer})
+    &&evidenceHash({scope,skill})===evidenceHash({scope:fixed.scope,skill:fixed.skill})
+    &&evidenceHash({scope,skill})===evidenceHash({scope:task.payload.scope,skill:task.payload.skill}),
+    'B站只读授权或固定发布已变化');
+  } else if(notion){
    const original=reservation?.definition,business=task.payload.workflow_input?.business;
    const stage=source.slice(-3);
    const matchesBusiness=stage==='101'
@@ -53,7 +63,7 @@ export async function startStandaloneSkillRun(pool,runId,input){
   conflict(other.length===0,'任务已有未结束执行，不能另起一轮');
   const current=(await client.query('SELECT task_id,status,ended_at,context FROM task_runs WHERE run_id=$1 FOR UPDATE',[runId])).rows[0];
   conflict(!current||current.task_id===task.id&&current.status==='running'&&current.ended_at===null,'已结束执行不能重新起跑');
-  const context={executor_kind:'codex-exec-v1',executor:input.claimer,claimed_at:new Date(task.claimed_at).toISOString(),skill,scope};
+  const context={executor_kind:verification?'standalone-typed-v1':'codex-exec-v1',executor:input.claimer,claimed_at:new Date(task.claimed_at).toISOString(),skill,scope};
   conflict(!current||current.context?.source==='standalone-skill'&&Object.entries(context).every(([key,value])=>current.context[key]!==undefined&&evidenceHash(current.context[key])===evidenceHash(value)),'已有run的执行者、Skill或范围不同');
   const run=await startRun({taskId:task.id,runId,source:'standalone-skill',context,definition},{pool,transactionClient:client});
   await client.query('COMMIT');

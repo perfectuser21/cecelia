@@ -104,6 +104,22 @@ test('宿主领取后只执行一次，回执中断时下一轮只重送同一�
   assert.deepEqual(actions, ['claim', 'finish', 'finish']);
 });
 
+test('固定任务 worker 不替另一条任务发回执或启动宿主', async () => {
+  const options = {
+    machineId: job.machine_id,
+    taskId: 'another-task',
+    request: async action => {
+      assert.equal(action, 'claim');
+      return { job };
+    },
+    provider: async () => assert.fail('wrong task reached provider'),
+  };
+  await assert.rejects(runStandaloneWorkerOnce({ ...options, receipts: { pending: async () => receipt } }),
+    /standalone_worker_receipt_scope_mismatch/);
+  await assert.rejects(runStandaloneWorkerOnce({ ...options, receipts: { pending: async () => null } }),
+    /standalone_worker_claim_mismatch/);
+});
+
 test('宿主无法证明启动结果时回写需复核', async () => {
   let receipt;
   const result = await runStandaloneWorkerOnce({

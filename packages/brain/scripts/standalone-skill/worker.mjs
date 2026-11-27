@@ -5,7 +5,7 @@ import { durableWrite } from '../../src/orchestrator/activity-supervisor.js';
 import { loadStandaloneProvider, readOwnedFile } from './launch.mjs';
 import { runStandaloneSkill } from './run.mjs';
 
-export async function runStandaloneWorkerOnce({ machineId, request, provider, receipts, sources }) {
+export async function runStandaloneWorkerOnce({ machineId, request, provider, receipts, sources, taskId }) {
   const send = async receipt => {
     const result = await request('finish', { machine_id: machineId, receipt });
     const expected = receipt.status === 'completed' ? 'completed' : 'blocked';
@@ -14,13 +14,16 @@ export async function runStandaloneWorkerOnce({ machineId, request, provider, re
   };
   const pending = await receipts.pending();
   if (pending) {
+    if (taskId !== undefined && pending.task_id !== taskId) throw Error('standalone_worker_receipt_scope_mismatch');
     await send(pending);
     return { status: 'reconciled' };
   }
-  const { job } = await request('claim', { machine_id: machineId, ...(sources === undefined ? {} : { sources }) });
+  const { job } = await request('claim', { machine_id: machineId,
+    ...(sources === undefined ? {} : { sources }), ...(taskId === undefined ? {} : { task_id: taskId }) });
   if (!job) return { status: 'idle' };
   const identity = { task_id: job.task_id, run_id: job.run_id };
-  if (job.machine_id !== machineId || !identity.task_id || !identity.run_id) throw Error('standalone_worker_claim_mismatch');
+  if (job.machine_id !== machineId || !identity.task_id || !identity.run_id
+      || (taskId !== undefined && identity.task_id !== taskId)) throw Error('standalone_worker_claim_mismatch');
   let receipt;
   try {
     const services = await provider(job);
@@ -70,6 +73,7 @@ async function main(configFile) {
     machineId: config.machine_id,
     provider: createProvider,
     sources: config.sources,
+    taskId: config.task_id,
     receipts: diskReceipts(config.receipts_directory),
     request: async (action, body) => {
       const response = await fetch(new URL('api/brain/workflow-foundation/standalone/' + action, target), {

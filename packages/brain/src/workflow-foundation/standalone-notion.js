@@ -7,31 +7,41 @@ import { UUID, requireFoundation, onlyKeys } from './contracts.js';
 import { validateMachineRequest } from './claim.js';
 import { foundationTransaction } from './registry.js';
 import { resolveStandaloneRelease } from './standalone-release.js';
-import { standaloneSourceList, standaloneSources, standaloneWorkflows } from './standalone-source.js';
+import { resolveBilibiliVerification } from './standalone-bilibili.js';
+import { bilibiliVerificationSource, standaloneSourceList, standaloneSources, standaloneWorkerSourceList, standaloneWorkerSources, standaloneWorkflows } from './standalone-source.js';
 
 const boundSource = `payload->>'source' IN (${standaloneSourceList}) AND task_type='workflow_dispatch'`;
+const boundWorkerSource = `payload->>'source' IN (${standaloneWorkerSourceList}) AND task_type='workflow_dispatch'`;
 
 export async function claimStandaloneNotionTask(pool, input) {
-  validateMachineRequest(input, ['machine_id','sources']);
+  validateMachineRequest(input, ['machine_id','sources','task_id']);
   const sources = input.sources ?? [standaloneSources[0]];
-  requireFoundation(Array.isArray(sources) && sources.length > 0 && sources.length <= standaloneSources.length
-    && new Set(sources).size === sources.length && sources.every(source => standaloneSources.includes(source)), 'standalone_worker_sources_invalid', 400);
+  requireFoundation(Array.isArray(sources) && sources.length > 0 && sources.length <= standaloneWorkerSources.length
+    && new Set(sources).size === sources.length && sources.every(source => standaloneWorkerSources.includes(source)), 'standalone_worker_sources_invalid', 400);
+  const exactVerification=sources.length===1&&sources[0]===bilibiliVerificationSource;
+  requireFoundation(exactVerification ? UUID.test(input.task_id??'')
+    : input.task_id===undefined&&!sources.includes(bilibiliVerificationSource), 'standalone_worker_task_scope_invalid',400);
   const machine = input.machine_id;
   return foundationTransaction(pool, 'notion-standalone:' + machine, async db => {
     // 103 has no phone resources. A review hold on the handset must not reserve the scorer.
-    const row = (await db.query(`SELECT candidate.* FROM tasks candidate WHERE ${boundSource} AND status='queued' AND claimed_by IS NULL
+    const row = (await db.query(`SELECT candidate.* FROM tasks candidate WHERE ${boundWorkerSource} AND status='queued' AND claimed_by IS NULL
       AND payload#>>'{foundation_request,machine_id}'=$1 AND payload->>'source'=ANY($2::text[])
-      AND NOT EXISTS (SELECT 1 FROM tasks active WHERE ${boundSource}
+      AND ($4::uuid IS NULL OR candidate.id=$4::uuid)
+      AND NOT EXISTS (SELECT 1 FROM tasks active WHERE ${boundWorkerSource}
         AND active.result#>>'{standalone_claim,machine_id}'=$1 AND active.status IN ('in_progress','blocked')
         AND (active.payload->>'source'=$3)=(candidate.payload->>'source'=$3))
-      ORDER BY created_at,id LIMIT 1 FOR UPDATE OF candidate SKIP LOCKED`, [machine,sources,'notion_leadgen_103'])).rows[0];
+      ORDER BY created_at,id LIMIT 1 FOR UPDATE OF candidate SKIP LOCKED`, [machine,sources,'notion_leadgen_103',input.task_id??null])).rows[0];
     if (!row) return { job: null };
 
     const stage = row.payload.source.slice(-3);
-    const fixed = await resolveStandaloneRelease(db, row.payload.workflow_definition, standaloneWorkflows[stage]);
+    const verification = row.payload.source === bilibiliVerificationSource;
+    const fixed = verification ? await resolveBilibiliVerification(db, row.payload.workflow_definition)
+      : await resolveStandaloneRelease(db, row.payload.workflow_definition, standaloneWorkflows[stage]);
     requireFoundation(fixed.machine_id === machine
       && fixed.definition.workflow_definition_version_id === row.payload.workflow_definition.workflow_definition_version_id
       && fixed.definition.snapshot_sha256 === row.payload.workflow_definition.snapshot_sha256, 'standalone_release_changed');
+    if (verification) requireFoundation(digest(row.payload.workflow_input) === digest({scope:fixed.scope,skill:fixed.skill}),
+      'bilibili_verification_scope_invalid');
     const claimedAt = new Date().toISOString();
     const job = {
       claimer: 'standalone:' + machine, claimed_at: claimedAt,
@@ -116,9 +126,10 @@ export async function finishStandaloneNotionTask(pool, input) {
   validateMachineRequest(input, ['machine_id', 'receipt']);
   const receipt = checkedReceipt(input.receipt);
   const outcome = await foundationTransaction(pool, 'notion-standalone:' + input.machine_id, async db => {
-    const task = (await db.query(`SELECT * FROM tasks WHERE ${boundSource} AND id=$1 FOR UPDATE`, [receipt.task_id])).rows[0];
+    const task = (await db.query(`SELECT * FROM tasks WHERE ${boundWorkerSource} AND id=$1 FOR UPDATE`, [receipt.task_id])).rows[0];
     const claim = task?.result?.standalone_claim;
     requireFoundation(claim?.run_id === receipt.run_id && claim.machine_id === input.machine_id, 'standalone_claim_conflict');
+    const verification = task.payload.source === bilibiliVerificationSource;
     const status = receipt.status === 'completed' ? 'completed' : 'blocked';
     const stored = task.result.standalone_receipt;
     if (stored) {
@@ -136,11 +147,14 @@ export async function finishStandaloneNotionTask(pool, input) {
     // The trusted provider boots its original run via start-skill. A worker cannot
     // settle a completed job just by returning a model response.
     if (status === 'completed') {
-      requireFoundation(task.result.codex_skill_direct?.run_id === receipt.run_id, 'standalone_run_unconfirmed');
+      const proof = task.result.bilibili_verification;
+      requireFoundation(verification ? proof?.run_id === receipt.run_id
+        && digest(receipt.evidence) === digest([proof.evidence])
+        : task.result.codex_skill_direct?.run_id === receipt.run_id, 'standalone_run_unconfirmed');
       const run = (await db.query(`SELECT id FROM task_runs WHERE task_id=$1 AND run_id=$2
         AND status='running' AND ended_at IS NULL AND context->>'source'='standalone-skill' FOR UPDATE`,
       [task.id, receipt.run_id])).rows[0];
-      requireFoundation(run, 'standalone_run_unconfirmed');
+      requireFoundation(run && (!verification || run.id === proof.task_run_id), 'standalone_run_unconfirmed');
       const closed = await finishRun({ runId: receipt.run_id, status: 'success', result: receipt },
         { pool: db, strict: true, emit: async () => {} });
       requireFoundation(closed.updated, 'standalone_run_unconfirmed');
@@ -156,8 +170,8 @@ export async function finishStandaloneNotionTask(pool, input) {
         result=result||jsonb_build_object('standalone_receipt',$3::jsonb) WHERE id=$1`,
       [task.id, receipt.reason, JSON.stringify(receipt)]);
     }
-    return { status, replayed:false };
+    return { status, replayed:false, relay:!verification };
   });
-  if (outcome.status === 'completed' && !outcome.replayed) await afterTerminalTransition(pool,receipt.task_id,outcome.status);
+  if (outcome.status === 'completed' && !outcome.replayed && outcome.relay) await afterTerminalTransition(pool,receipt.task_id,outcome.status);
   return { status:outcome.status };
 }
