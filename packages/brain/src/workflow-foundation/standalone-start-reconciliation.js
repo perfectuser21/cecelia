@@ -6,7 +6,7 @@ import { digest } from '../orchestrator/commander-decision.js';
 import { validateMachineRequest } from './claim.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
-import { desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
+import { collectionOpenAppReview, desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
@@ -67,7 +67,8 @@ function verifyRequest(runId, input) {
   const review = input.review;
   onlyKeys(review, ['protocol','observed_at','evidence_sha256','admission_code','host_process_exited','native_operations',
     'business_effects','local_lock','host_proof','revocation','hardware_diagnostic','cleanup_diagnostic']);
-  const desktopCleanup = review.protocol === 'standalone-pre-native-cleanup-review/v1';
+  const collectionOpenAppTimeout = review.protocol === collectionOpenAppReview;
+  const desktopCleanup = collectionOpenAppTimeout || review.protocol === 'standalone-pre-native-cleanup-review/v1';
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
   onlyKeys(host.process_identity, ['pid','pgid','ppid','uid','start_identity']);
@@ -94,7 +95,7 @@ function verifyRequest(runId, input) {
     && revocation.protocol === 'standalone-skill-host-revocation/v1' && proofIdentity.every(key=>host[key]===revocation[key])
     && revocation.reason === (desktopCleanup ? review.admission_code : 'ADMISSION_REJECTED')
     && revocation.pid === host.process_identity.pid);
-  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host) };
+  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host), collectionOpenAppTimeout };
   invalid(review.cleanup_diagnostic === undefined);
   return { failureReason: startFailure, hardwareTimeout: verifyHardwareTimeout(review,input.task_id) };
 }
@@ -102,10 +103,11 @@ function verifyRequest(runId, input) {
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
-  const { failureReason, hardwareTimeout, cleanup, released } = verifyRequest(runId,input);
+  const { failureReason, hardwareTimeout, cleanup, released, collectionOpenAppTimeout } = verifyRequest(runId,input);
   const requestSha = digest(input), review = input.review, host = review.host_proof;
-  const expectedSource = released ? 'notion_leadgen_102' : 'notion_leadgen_101';
-  const expectedWorkflow = released ? 'douyin_video_processing' : 'douyin_video_discovery';
+  const collection = Boolean(released || collectionOpenAppTimeout);
+  const expectedSource = collection ? 'notion_leadgen_102' : 'notion_leadgen_101';
+  const expectedWorkflow = collection ? 'douyin_video_processing' : 'douyin_video_discovery';
   return foundationTransaction(pool, 'notion-standalone:'+input.machine_id, async db => {
     const task = (await db.query("SELECT * FROM tasks WHERE id=$1 AND task_type='workflow_dispatch' AND payload->>'source'=$2 FOR UPDATE",[input.task_id,expectedSource])).rows[0];
     const claim = task?.result?.standalone_claim, receipt = task?.result?.standalone_receipt;
@@ -119,7 +121,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && attestation.machine_id === claim.machine_id && attestation.claimer === claim.claimer && attestation.claimed_at === claim.claimed_at
       && digest(attestation) === input.expected_attestation_sha256 && attestation.task_run_id === host.task_run_id
       && attestation.run_binding?.run_binding_id === host.run_binding_id && scope?.workflow_key === expectedWorkflow
-      && (!released || scope.source_run === task.payload.workflow_input?.business?.source_run)
+      && (!collection || scope.source_run === task.payload.workflow_input?.business?.source_run)
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
@@ -166,7 +168,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
     const locks = (await db.query('SELECT device_name,locked_by,xmin::text AS lease_version FROM device_locks WHERE device_name=$1 OR locked_by IN ($2,$3) FOR UPDATE',[serial,task.id,runId])).rows;
     const [deviceLock] = locks;
     check(locks.length === 1 && deviceLock.device_name === serial
-      && (deviceLock.locked_by === null || cleanup && deviceLock.locked_by === task.id)
+      && (deviceLock.locked_by === null || cleanup && !collectionOpenAppTimeout && deviceLock.locked_by === task.id)
       && (!cleanup || cleanup.serial === serial && cleanup.firstIntentAt >= +run.started_at
         && cleanup.leaseVersion === deviceLock.lease_version)
       && (!released || released.firstIntentAt >= +run.started_at && released.leaseVersion === deviceLock.lease_version),
@@ -196,6 +198,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       ...((cleanup ?? released)?.ledgerSha256 ? { cleanup_ledger_sha256:(cleanup ?? released).ledgerSha256 } : {}),
       ...(preflight ? { preflight_timeout_sha256:preflight.sha256 } : {}),
       ...(account ? { account_foreground_refusal_sha256:account.sha256 } : {}),
+      ...(cleanup?.openAppProof ? { collection_open_app_timeout_sha256:cleanup.openAppProof.sha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
         central_release_performed:releaseCentral } : {}) };
@@ -203,7 +206,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       {pool:db,strict:true,emit:async()=>{}});
     check(finished.updated,'standalone_start_review_write_unconfirmed');
     const closed = await finalizeTask(db,task.id,'failed',{relay:false,onlyIfStatus:'blocked',set:{completed_at:'now'},
-      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason}});
+      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason,collectionOpenAppTimeout}});
     check(closed.rowCount === 1,'standalone_start_review_write_unconfirmed');
     return response(false);
   });
