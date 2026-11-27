@@ -25,10 +25,9 @@ import {createFoundationTask} from '../../workflow-foundation/registry.js';
 import {dispatchNotionLeadgen,ENGLISH_TASKS_DB} from '../../notion-leadgen-dispatch.js';
 import path from 'node:path';
 import {foundationHttpFixture,until} from '../fixtures/workflow-foundation-http.js';
+import {verifyFoundationPausedRecovery} from '../fixtures/workflow-foundation-recovery.js';
 import processState from '../../orchestrator/activity-supervisor-state.cjs';
 import {unblockTask} from '../../task-updater.js';
-import {recoverPausedFoundationTasks} from '../../workflow-foundation/claim.js';
-import {buildPauseLowPriorityQuery} from '../../alertness/escalation.js';
 let fixture;
 afterEach(async()=>{await fixture?.close();fixture=null;});
 
@@ -308,35 +307,7 @@ it.each([
 
 it('自动暂停的原工单恢复到相同冻结发布，只生成一个运行，人工暂停和在途任务保持原状',async()=>{
  fixture=await foundationHttpFixture();
- const {registration,release}=await fixture.publish();
- const submit=async(key)=>(await fixture.request('/workflow-foundation/tasks',{
-  workflow_id:registration.workflow_id,release_id:release.id,input:{label:key},idempotency_key:key
- })).body.task.id;
- const taskId=await submit('recover-original'),manual=await submit('operator-paused'),running=await submit('already-claimed');
- const originalJob=(await fixture.request('/workflow-foundation/claim',{machine_id:'fixture-host',task_id:running})).body.job;
- expect(originalJob.run_id).toBeTruthy();
- await fixture.pool.query("UPDATE tasks SET status='paused',error_message='operator_pause' WHERE id=$1",[manual]);
- const original=(await fixture.pool.query('SELECT payload FROM tasks WHERE id=$1',[taskId])).rows[0].payload;
- expect((await fixture.pool.query(buildPauseLowPriorityQuery(),[['P0','P1','P2','P3'],['api'],'escalation_graceful_degrade',[]])).rows.map(r=>r.id)).toEqual([taskId]);
- const claim=()=>fixture.request('/workflow-foundation/claim',{machine_id:'fixture-host',task_id:taskId});
- expect((await claim()).body).toEqual({job:null});
- expect(await recoverPausedFoundationTasks(fixture.pool,'graceful_degrade')).toBe(0);
- const repeats=await Promise.all([
-  recoverPausedFoundationTasks(fixture.pool,'auto_recovery'),
-  recoverPausedFoundationTasks(fixture.pool,'auto_recovery')
- ]);
- expect(repeats.sort()).toEqual([0,1]);
- const rows=(await fixture.pool.query('SELECT id,status,payload,result,status_history FROM tasks WHERE id=ANY($1::uuid[])',[[taskId,manual,running]])).rows;
- const byId=Object.fromEntries(rows.map(row=>[row.id,row]));
- expect(byId[taskId]).toMatchObject({status:'queued',payload:original});
- expect(byId[taskId].status_history.at(-1)).toMatchObject({from:'paused',to:'queued',source:'foundation_preclaim_recovery'});
- expect(byId[manual].status).toBe('paused');
- expect(byId[running]).toMatchObject({status:'in_progress',result:{foundation_runner:{run_id:originalJob.run_id}}});
- const [a,b]=await Promise.all([claim(),claim()]);
- expect(a.body.job.definition.release_id).toBe(release.id);
- expect(a.body.job.task_id).toBe(taskId);
- expect(b.body.job.run_id).toBe(a.body.job.run_id);
- expect((await fixture.pool.query('SELECT run_id FROM task_runs WHERE task_id=$1',[taskId])).rows).toEqual([{run_id:a.body.job.run_id}]);
+ await verifyFoundationPausedRecovery(fixture);
 },30000);
 
 it('无部署观测和暂停定义拒绝派单，同机其他Workflow发布不撤销现有版本',async()=>{
