@@ -337,9 +337,9 @@ describe('countAutoDispatchInProgress', () => {
     expect(await countAutoDispatchInProgress()).toBe(5);
   });
 
-  it('should return 0 on DB error', async () => {
+  it('should reject unknown automatic-pool usage on DB error', async () => {
     pool.query.mockRejectedValue(new Error('DB error'));
-    expect(await countAutoDispatchInProgress()).toBe(0);
+    await expect(countAutoDispatchInProgress()).rejects.toThrow('ownership observation unavailable');
   });
 });
 

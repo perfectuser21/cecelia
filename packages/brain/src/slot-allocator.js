@@ -9,12 +9,11 @@
  * Priority: User (B) > Cecelia (A) > Task Pool (C)
  * Graceful: Never kills running tasks, only stops new dispatches.
  */
-
 import os from 'os';
-import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap } from './executor.js';
 import pool from './db.js';
-import { deterministicScriptSql } from './lib/code-script-policy.js';
-import { BACKPRESSURE_BYPASS_TASK_TYPES, CODEX_SLOT_TASK_TYPES } from './lib/task-type-registry.js';
+import { countCeceliaInProgress, countAutoDispatchInProgress, getQueueDepth, countCodexInProgress } from './lib/slot-ownership-count.js';
+import { MAX_SEATS, checkServerResources, getActiveProcessCount as _getActiveProcessCount, getEffectiveMaxSeats, PHYSICAL_CAPACITY as _PHYSICAL_CAPACITY, getBudgetCap } from './executor.js';
+import { BACKPRESSURE_BYPASS_TASK_TYPES } from './lib/task-type-registry.js';
 import {
   listProcessesWithElapsed,
   listProcessesWithPpid,
@@ -175,54 +174,6 @@ async function hasPendingInternalTasks() {
 }
 
 /**
- * Count Cecelia-internal tasks currently in_progress.
- */
-async function countCeceliaInProgress() {
-  try {
-    const result = await pool.query(`
-      SELECT COUNT(*) FROM tasks
-      WHERE status = 'in_progress'
-      AND (payload->>'decomposition' IS NOT NULL
-           OR payload->>'requires_cortex' = 'true')
-    `);
-    return parseInt(result.rows[0].count, 10);
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Count auto-dispatched (non-internal) tasks currently in_progress.
- */
-async function countAutoDispatchInProgress() {
-  try {
-    const result = await pool.query(`
-      SELECT COUNT(*) FROM tasks
-      WHERE status = 'in_progress'
-      AND (payload->>'decomposition' IS NULL
-           AND (payload->>'requires_cortex' IS NULL OR payload->>'requires_cortex' != 'true'))
-      AND NOT ${deterministicScriptSql('tasks')}
-    `);
-    return parseInt(result.rows[0].count, 10);
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Count all tasks currently in queued status (across all task types).
- * Used for backpressure detection: if queue is deep, burst limit is reduced.
- */
-async function getQueueDepth() {
-  try {
-    const r = await pool.query("SELECT COUNT(*) FROM tasks WHERE status='queued'");
-    return parseInt(r.rows[0].count, 10);
-  } catch {
-    return 0;
-  }
-}
-
-/**
  * Pure synchronous helper: compute backpressure state from queue depth and
  * memory health. Separating this from calculateSlotBudget() makes it
  * unit-testable without DB.
@@ -305,23 +256,6 @@ function getBackpressureState({
     memory_health: health,
     override_burst_limit: active ? BACKPRESSURE_BURST_LIMIT : null,
   };
-}
-
-/**
- * Count in-progress Codex-native tasks and tasks routed to Codex by the dispatcher.
- * The selected executor is persisted in payload.executor before execution.
- */
-async function countCodexInProgress() {
-  try {
-    const result = await pool.query(
-      `SELECT COUNT(*) FROM tasks WHERE status = 'in_progress'
-       AND (task_type = ANY($1::text[]) OR payload->>'executor' = 'codex')`,
-      [[...CODEX_SLOT_TASK_TYPES]],
-    );
-    return parseInt(result.rows[0].count, 10);
-  } catch {
-    return 0;
-  }
 }
 
 // ============================================================

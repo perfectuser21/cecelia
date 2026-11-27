@@ -40,6 +40,7 @@ vi.mock('../executor.js', () => ({
   killProcessTwoStage: vi.fn(),
   getBillingPause: vi.fn(() => ({ active: false })),
   getActiveProcessCount: vi.fn(() => 0),
+  getActiveProcesses: vi.fn(() => []),
   MAX_SEATS: 12,
   PHYSICAL_CAPACITY: 12,
   INTERACTIVE_RESERVE: 2,
@@ -132,6 +133,9 @@ function makeClaudeTask(id = 'claude-1', priority = 'P1') {
 
 function setupQueryMocks(dispatchedTaskId, taskType = 'research') {
   mockQuery.mockImplementation((sql) => {
+    if (/\bcount\s*\(\s*\*\s*\)/i.test(sql)) {
+      return Promise.resolve({ rows: [{ count: '0', independent_tasks: [] }] });
+    }
     if (/UPDATE tasks.*pipeline_terminal_failure/.test(sql)) {
       return Promise.resolve({ rows: [], rowCount: 0 });
     }

@@ -12,7 +12,7 @@
  *   (a) DB in_progress=N → task_pool.used=N + task_pool.available 正确
  *   (b) DB in_progress=0 → task_pool.used=0 + available=effectiveSlots + dispatch_allowed=true
  *   (c) DB in_progress=0 + 8 zombie ps 进程 → 不再被 ps 影响，available 仍为正值
- *   (d) DB query 失败 → fallback 安全（used=0，available 仍可为正值）
+ *   (d) DB query 失败 → 闭锁未知占用，不以 used=0 放行
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -115,14 +115,10 @@ describe('Slot Accounting — DB-authoritative in_progress 对齐', () => {
     expect(budget.dispatchAllowed).toBe(true);
   });
 
-  // (d) DB query 失败 → fallback 安全：used=0, available 仍可为正值
-  it('(d) DB query 失败 → fallback 安全: used=0, available≥0, 不崩溃', async () => {
+  // 未知自动池基数不能以零占用授予新派发。
+  it('(d) DB query 失败 → 拒绝未知预算，不释放容量', async () => {
     pool.query.mockRejectedValue(new Error('DB connection failed'));
-
-    const budget = await calculateSlotBudget();
-    expect(budget.taskPool.used).toBe(0); // fallback: countAutoDispatchInProgress returns 0
-    expect(budget.taskPool.available).toBeGreaterThanOrEqual(0); // 不为负数
-    // 不抛出异常
+    await expect(calculateSlotBudget()).rejects.toThrow('ownership observation unavailable');
   });
 
   // (e) orphan headless 孤儿进程不污染 Pool C 计算
