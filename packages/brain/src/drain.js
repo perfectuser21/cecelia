@@ -61,6 +61,12 @@ export function ownsBrainLaunch(token, taskId) {
 }
 export function finishBrainLaunch(token) { launches.delete(token); }
 
+/** Task-associated counterevidence only; anonymous admission policy is unchanged. */
+export function getTaskLaunchIds() {
+  return Object.freeze([...new Set([...launches.values()]
+    .map(entry => entry.taskId).filter(id => typeof id === 'string' && id.length > 0))]);
+}
+
 function response(blockers = [], independent = 0) {
   return {
     protocol: PROTOCOL, drain_id: _drainId, draining: _draining, drain_started_at: _drainStartedAt,
