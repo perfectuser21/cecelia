@@ -414,7 +414,7 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
 });
 
 
-it.each([false, true])('102 已回桌面且零业务写入时结算原运行（包含启动=%s）', async (openedApp) => {
+it.each(['cleanup', 'launch', 'probes', 'mixed'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
   const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
   const next = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -428,7 +428,11 @@ it.each([false, true])('102 已回桌面且零业务写入时结算原运行（�
   const open = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
     [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'],version,
     [...target,'shell','dumpsys','window','displays']];
-  const commands = openedApp ? [...open,...cleanup] : cleanup;
+  const telephony=[...target,'shell','dumpsys','telephony.registry'];
+  const probe=[version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
+    telephony,version,[...target,'shell','dumpsys','window','displays'],version,telephony];
+  const prelude={cleanup:[],launch:open,probes:[...probe,...probe],mixed:[...probe,...open,version]}[mode];
+  const commands = [...prelude,...cleanup];
   const sha = value => createHash('sha256').update(value).digest('hex');
   const boundary = 'darwin-sandbox-deny-process-fork-v1';
   const [device] = (await fixture.pool.query('SELECT xmin::text AS version FROM device_locks WHERE device_name=$1',[serial])).rows;
@@ -459,13 +463,16 @@ it.each([false, true])('102 已回桌面且零业务写入时结算原运行（�
   const missingAck = diagnostic.terminal_ack_ledger.raw.trimEnd().split('\n').slice(0,-1).join('\n')+'\n';
   expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
     terminal_ack_ledger:{raw:missingAck,sha256:sha(missingAck)}}}})).status).toBe(400);
-  if (openedApp) {
+  if (prelude.length) {
     const replaceCommand = (index,command) => commands.map((original,position)=>position===index?command:original);
     for (const invalidCommands of [
       replaceCommand(6,[...target,'shell','input','tap','100','100']),
-      replaceCommand(15,[...target,'shell','input','keyevent','4']),
-      commands.slice(1),
+      replaceCommand(commands.length-3,[...target,'shell','input','keyevent','4']),
+      [...prelude,...cleanup.slice(0,-1)],
       [...commands,version],
+      [open[6],...cleanup],
+      [...open,...open,...cleanup],
+      replaceCommand(2,['-H','127.0.0.1','-P','5044','-s',transport,'get-state']),
     ]) {
       expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:proofFor(invalidCommands)}})).status).toBe(400);
     }
