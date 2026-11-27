@@ -6,11 +6,12 @@ import { digest } from '../orchestrator/commander-decision.js';
 import { validateMachineRequest } from './claim.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
-import { desktopCleanupFailure, verifyDesktopCleanupProof } from './standalone-cleanup-review.js';
+import { desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
 const startFailure = 'standalone_start_unconfirmed';
+const businessUnconfirmed = 'standalone_business_unconfirmed';
 const evidenceTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const proofIdentity = ['task_id','run_id','task_run_id','run_binding_id','source_commit','snapshot_sha256'];
 const validPid = value => Number.isSafeInteger(value) && value > 0;
@@ -69,24 +70,30 @@ function verifyRequest(runId, input) {
   const desktopCleanup = review.protocol === 'standalone-pre-native-cleanup-review/v1';
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
-  onlyKeys(revocation, ['protocol',...proofIdentity,'pid','reason','observed_at']);
   onlyKeys(host.process_identity, ['pid','pgid','ppid','uid','start_identity']);
   onlyKeys(review.local_lock, ['owner','review_required']);
   invalid(UUID.test(runId ?? '') && UUID.test(input.task_id ?? '')
     && [input.expected_receipt_sha256,input.expected_attestation_sha256,review.evidence_sha256,host.snapshot_sha256].every(x=>typeof x==='string'&&hash.test(x))
-    && [input.blocked_at,review.observed_at,revocation.observed_at].every(evidenceTime)
-    && (desktopCleanup || review.protocol === 'standalone-pre-native-review/v1')
+    && [input.blocked_at,review.observed_at].every(evidenceTime)
     && review.host_process_exited === true && review.native_operations === 0 && review.business_effects === 0
-    && review.local_lock.owner === runId && review.local_lock.review_required === true
-    && host.protocol === 'standalone-skill-host-proof/v1' && revocation.protocol === 'standalone-skill-host-revocation/v1'
+    && host.protocol === 'standalone-skill-host-proof/v1'
     && host.task_id === input.task_id && host.run_id === runId && [host.task_run_id,host.run_binding_id].every(x=>UUID.test(x??''))
-    && commit.test(host.source_commit ?? '') && proofIdentity.every(key=>host[key]===revocation[key])
-    && revocation.reason === (desktopCleanup ? review.admission_code : 'ADMISSION_REJECTED') && validPid(host.process_identity.pid) && validPid(host.process_identity.pgid)
+    && commit.test(host.source_commit ?? '') && validPid(host.process_identity.pid) && validPid(host.process_identity.pgid)
     && validPid(host.process_identity.ppid) && Number.isSafeInteger(host.process_identity.uid) && host.process_identity.uid >= 0
     && typeof host.process_identity.start_identity === 'string' && host.process_identity.start_identity.length > 0
-    && host.process_identity.start_identity.length <= 200 && revocation.pid === host.process_identity.pid
+    && host.process_identity.start_identity.length <= 200
     && typeof host.run_directory === 'string' && host.run_directory.startsWith('/') && host.run_directory.endsWith('/'+runId)
     && host.run_directory.length <= 1024 && !/[\r\n\0]/.test(host.run_directory));
+  if (review.protocol === 'standalone-released-no-effect-review/v1') {
+    invalid(revocation === undefined && review.local_lock.owner === null && review.local_lock.review_required === false);
+    return { failureReason:businessUnconfirmed, released:verifyReleasedCleanupProof(review,host,input.blocked_at) };
+  }
+  onlyKeys(revocation, ['protocol',...proofIdentity,'pid','reason','observed_at']);
+  invalid((desktopCleanup || review.protocol === 'standalone-pre-native-review/v1') && evidenceTime(revocation.observed_at)
+    && review.local_lock.owner === runId && review.local_lock.review_required === true
+    && revocation.protocol === 'standalone-skill-host-revocation/v1' && proofIdentity.every(key=>host[key]===revocation[key])
+    && revocation.reason === (desktopCleanup ? review.admission_code : 'ADMISSION_REJECTED')
+    && revocation.pid === host.process_identity.pid);
   if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host) };
   invalid(review.cleanup_diagnostic === undefined);
   return { failureReason: startFailure, hardwareTimeout: verifyHardwareTimeout(review,input.task_id) };
@@ -95,10 +102,12 @@ function verifyRequest(runId, input) {
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
-  const { failureReason, hardwareTimeout, cleanup } = verifyRequest(runId,input);
+  const { failureReason, hardwareTimeout, cleanup, released } = verifyRequest(runId,input);
   const requestSha = digest(input), review = input.review, host = review.host_proof;
+  const expectedSource = released ? 'notion_leadgen_102' : 'notion_leadgen_101';
+  const expectedWorkflow = released ? 'douyin_video_processing' : 'douyin_video_discovery';
   return foundationTransaction(pool, 'notion-standalone:'+input.machine_id, async db => {
-    const task = (await db.query("SELECT * FROM tasks WHERE id=$1 AND task_type='workflow_dispatch' AND payload->>'source'='notion_leadgen_101' FOR UPDATE",[input.task_id])).rows[0];
+    const task = (await db.query("SELECT * FROM tasks WHERE id=$1 AND task_type='workflow_dispatch' AND payload->>'source'=$2 FOR UPDATE",[input.task_id,expectedSource])).rows[0];
     const claim = task?.result?.standalone_claim, receipt = task?.result?.standalone_receipt;
     const attestation = task?.result?.codex_skill_direct, scope = task?.payload?.scope;
     check(claim?.task_id === input.task_id && claim.run_id === runId && claim.machine_id === input.machine_id
@@ -109,7 +118,8 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && attestation?.protocol === 'codex-exec-v1' && attestation.task_id === task.id && attestation.run_id === runId
       && attestation.machine_id === claim.machine_id && attestation.claimer === claim.claimer && attestation.claimed_at === claim.claimed_at
       && digest(attestation) === input.expected_attestation_sha256 && attestation.task_run_id === host.task_run_id
-      && attestation.run_binding?.run_binding_id === host.run_binding_id && scope?.workflow_key === 'douyin_video_discovery'
+      && attestation.run_binding?.run_binding_id === host.run_binding_id && scope?.workflow_key === expectedWorkflow
+      && (!released || scope.source_run === task.payload.workflow_input?.business?.source_run)
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
@@ -138,8 +148,8 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && task.claimed_at?.toISOString() === claim.claimed_at && run.status === 'running' && run.ended_at === null
       && Object.keys(run.result ?? {}).length === 0
       && !['native_agent','workflow_control','workflow_common_runner','foundation_runner'].some(key=>Object.hasOwn(task.result,key)));
-    const reviewedAt = Date.parse(review.observed_at), revokedAt = Date.parse(review.revocation.observed_at), blockAt = Date.parse(input.blocked_at), at = now();
-    check(revokedAt >= +run.started_at && revokedAt <= blockAt && reviewedAt >= blockAt
+    const reviewedAt = Date.parse(review.observed_at), revokedAt = Date.parse(review.revocation?.observed_at), blockAt = Date.parse(input.blocked_at), at = now();
+    check((released || revokedAt >= +run.started_at && revokedAt <= blockAt) && reviewedAt >= blockAt
       && reviewedAt <= at+5000 && at-reviewedAt <= 300000, 'standalone_start_review_stale');
 
     // Lock the immutable binding too, to order the check relative to FK-bound span ingestion.
@@ -158,7 +168,9 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
     check(locks.length === 1 && deviceLock.device_name === serial
       && (deviceLock.locked_by === null || cleanup && deviceLock.locked_by === task.id)
       && (!cleanup || cleanup.serial === serial && cleanup.firstIntentAt >= +run.started_at
-        && cleanup.leaseVersion === deviceLock.lease_version),'standalone_start_review_active_resources');
+        && cleanup.leaseVersion === deviceLock.lease_version)
+      && (!released || released.firstIntentAt >= +run.started_at && released.leaseVersion === deviceLock.lease_version),
+    'standalone_start_review_active_resources');
     const { active } = (await db.query(`SELECT
       EXISTS (SELECT 1 FROM task_runs WHERE task_id=$1 AND run_id<>$2 AND ended_at IS NULL)
       OR EXISTS (SELECT 1 FROM task_leases WHERE task_id=$1 AND released_at IS NULL)
@@ -178,13 +190,14 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       task_run_id:run.id, run_binding_id:binding.id, receipt_sha256:input.expected_receipt_sha256,
       attestation_sha256:input.expected_attestation_sha256, request_sha256:requestSha, retry_safe:false,
       observed_at:review.observed_at, evidence_sha256:review.evidence_sha256,
-      host_proof_sha256:digest(host), revocation_sha256:digest(review.revocation), admission_code:review.admission_code,
+      host_proof_sha256:digest(host), admission_code:review.admission_code,
+      ...(review.revocation ? { revocation_sha256:digest(review.revocation) } : {}),
       ...(hardwareTimeout ? { hardware_diagnostic_sha256:hardwareTimeout.sha256 } : {}),
-      ...(cleanup?.ledgerSha256 ? { cleanup_ledger_sha256:cleanup.ledgerSha256 } : {}),
+      ...((cleanup ?? released)?.ledgerSha256 ? { cleanup_ledger_sha256:(cleanup ?? released).ledgerSha256 } : {}),
       ...(preflight ? { preflight_timeout_sha256:preflight.sha256 } : {}),
       ...(account ? { account_foreground_refusal_sha256:account.sha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
-      ...(cleanup ? { cleanup_diagnostic_sha256:cleanup.sha256, observed_central_lease_version:cleanup.leaseVersion,
+      ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
         central_release_performed:releaseCentral } : {}) };
     const finished = await finishRun({runId,status:'failed',error:failureReason,result:{standalone_start_review:settlement}},
       {pool:db,strict:true,emit:async()=>{}});

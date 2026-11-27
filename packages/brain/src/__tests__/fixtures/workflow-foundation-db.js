@@ -57,7 +57,8 @@ export async function workflowFoundationDatabase({scenario='healthy',playbook,wo
   await f.pool.query("INSERT INTO value_streams(id,name) VALUES($1,'隔离Foundation价值流')",[vs]);
   await f.pool.query("INSERT INTO capabilities(id,name,parent_journey_id,status) VALUES($1,'隔离Foundation能力',$2,'active')",[cap,vs]);
   await f.pool.query("INSERT INTO tasks(id,title,status,task_type,payload) VALUES($1,'隔离冻结登记','in_progress','research',$2)",[task,{workflow_authoring:true}]);
-  const inputSchema={type:'object',properties:{label:{type:'string'},...(directInput?{business:{type:'object',properties:{keyword:{type:'string'},max_candidates:{type:'integer'}},required:['keyword','max_candidates']}}:{})},required:['label'],additionalProperties:false};
+  const businessProperties=key==='douyin_video_processing'?{source_run:{type:'string'}}:{keyword:{type:'string'},max_candidates:{type:'integer'}};
+  const inputSchema={type:'object',properties:{label:{type:'string'},...(directInput?{business:{type:'object',properties:businessProperties,required:Object.keys(businessProperties)}}:{})},required:['label'],additionalProperties:false};
   const activity=(key,order)=>({key,order,budget:{max_duration_s:15,heartbeat_s:1},acceptance:{description:'真实读回base=21或answer=42'},
    failure:{empty_ok:[],retryable:[],fatal:['error'],needs_human:{cases:['unknown']}},
    runtime:{phase:'source',protocol:'json-stdio-v1',entry:'work.mjs',argv:[key],executor_kind:'code'}});

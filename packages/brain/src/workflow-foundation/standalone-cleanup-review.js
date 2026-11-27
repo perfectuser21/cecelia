@@ -93,6 +93,21 @@ function verifyAccountForegroundRefusal(proof, review, host) {
   return {sha256:proof.sha256,snapshot:verifyCompanySnapshot(proof.company_snapshot,host)};
 }
 
+function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null) {
+  let previousEnd = 0;
+  for (const [index,leaf] of leaves.entries()) {
+    onlyKeys(leaf,['sequence','argv_sha256','intent_at','boundary','pid','started_at','ended_at','code','signal',
+      'tainted','dump_crash_returned','request_returned']);
+    invalid(leaf.sequence === index + 1 && (!acceptedArgv || acceptedArgv.has(leaf.argv_sha256))
+      && leaf.boundary === 'darwin-sandbox-deny-process-fork-v1' && Number.isSafeInteger(leaf.pid) && leaf.pid > 0
+      && [leaf.intent_at,leaf.started_at,leaf.ended_at].every(Number.isSafeInteger)
+      && leaf.intent_at >= previousEnd && leaf.started_at >= leaf.intent_at && leaf.ended_at >= leaf.started_at
+      && leaf.ended_at <= cutoff && leaf.code === 0 && leaf.signal === null
+      && leaf.tainted === false && leaf.dump_crash_returned === false && leaf.request_returned === true);
+    previousEnd = leaf.ended_at;
+  }
+}
+
 export function verifyDesktopCleanupProof(review, host) {
   const artifact = review.cleanup_diagnostic;
   onlyKeys(artifact,['raw','sha256','adb_endpoint','adb_serial','central_lease_version','desktop_readback',
@@ -140,18 +155,7 @@ export function verifyDesktopCleanupProof(review, host) {
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  let previousEnd = 0;
-  for (const [index,leaf] of seal.leaves.entries()) {
-    onlyKeys(leaf,['sequence','argv_sha256','intent_at','boundary','pid','started_at','ended_at','code','signal',
-      'tainted','dump_crash_returned','request_returned']);
-    invalid(leaf.sequence === index + 1 && (!allReturned || accountRefused || readOnly.has(leaf.argv_sha256))
-      && leaf.boundary === 'darwin-sandbox-deny-process-fork-v1' && Number.isSafeInteger(leaf.pid) && leaf.pid > 0
-      && [leaf.intent_at,leaf.started_at,leaf.ended_at].every(Number.isSafeInteger)
-      && leaf.intent_at >= previousEnd && leaf.started_at >= leaf.intent_at && leaf.ended_at >= leaf.started_at
-      && leaf.ended_at <= Date.parse(review.revocation.observed_at) && leaf.code === 0 && leaf.signal === null
-      && leaf.tainted === false && leaf.dump_crash_returned === false && leaf.request_returned === true);
-    previousEnd = leaf.ended_at;
-  }
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused ? readOnly : null);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
@@ -169,4 +173,42 @@ export function verifyDesktopCleanupProof(review, host) {
   }
   const preflightProof=preflight ? verifyPreflightTimeout(controller,review,host,desktop.serial) : undefined;
   return { sha256, ledgerSha256, preflightProof, accountProof, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
+}
+
+export function verifyReleasedCleanupProof(review, host, blockedAt) {
+  const artifact = review.cleanup_diagnostic;
+  onlyKeys(artifact, ['raw','sha256','adb_endpoint','adb_serial','central_lease_version','terminal_ack_ledger']);
+  const { raw, sha256, adb_endpoint: endpoint, adb_serial: serial, central_lease_version: leaseVersion,
+    terminal_ack_ledger: ledger } = artifact;
+  const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
+  const transport = typeof serial === 'string' && localhost.exec(serial);
+  invalid(review.admission_code === 'CLEANUP_VERIFIED_NO_BUSINESS' && review.hardware_diagnostic === undefined
+    && typeof raw === 'string' && Buffer.byteLength(raw) <= 8192 && sha(raw) === sha256
+    && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
+    && typeof leaseVersion === 'string' && /^[0-9]{1,12}$/.test(leaseVersion));
+
+  let original;
+  try { original = JSON.parse(raw); } catch { invalid(false); }
+  onlyKeys(original, ['task_id','run_id','execution_mode','native_return_unknown','quarantine_verified',
+    'local_released','central_released','desktop','leaves']);
+  const { leaves: seal, desktop } = original;
+  onlyKeys(seal, ['complete','empty_complete','requests_returned','empty_requests_returned','epoch_fence_lost','leaves','ledger']);
+  const foreground = typeof desktop === 'string' && /^launcher=([^\n]+)\nforeground_package=\1\nforeground= *mCurrentFocus=Window\{[^\n]* ([^\s}]+)\}\n?$/.exec(desktop);
+  const ledgerDirectory = host.run_directory + '/standalone-leaves/';
+  invalid(original.task_id === host.task_id && original.run_id === host.run_id
+    && original.execution_mode === 'codex-direct' && original.native_return_unknown === false
+    && original.quarantine_verified === false && original.local_released === true && original.central_released === true
+    && foreground && androidComponent(foreground[2]).package === foreground[1]
+    && seal.complete === true && seal.empty_complete === false && seal.requests_returned === true
+    && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
+    && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
+    && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
+    && Array.isArray(seal.leaves) && seal.leaves.length === 9);
+  verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt));
+  const target = ['-H','127.0.0.1','-P',socket[1],'-s',serial], version = ['version'];
+  const commands = [version,version,[...target,'get-state'],version,
+    [...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
+    version,[...target,'shell','input','keyevent','3'],version,[...target,'shell','dumpsys','window','displays']];
+  return { sha256, ledgerSha256:verifyLeafLedger(ledger,seal.leaves,commands,false),
+    firstIntentAt:seal.leaves[0].intent_at, leaseVersion };
 }
