@@ -148,19 +148,22 @@ function androidHierarchyNodes(xml) {
     }
     invalid(depth>0 || nodes.length===0);
     const attributes = new Map();
-    let end = 0;
-    for (const attribute of tag[1].matchAll(/\s+([A-Za-z_][\w.-]*)="([^"<>]*)"/g)) {
-      const [,name,value]=attribute;
-      invalid(attribute.index===end && !attributes.has(name)
+    const fields = tag[1].trimEnd().split('"', 36_000);
+    invalid(fields.length > 1 && fields.length % 2 === 1 && fields.pop() === '');
+    for (let index = 0; index < 36_000 && index < fields.length; index += 2) {
+      const declaration = fields[index];
+      const name = declaration.slice(0,-1).trimStart();
+      invalid(/\s/.test(declaration[0] ?? '') && declaration.endsWith('=') && /^[A-Za-z_][\w.-]*$/.test(name));
+      const value = fields[index+1];
+      invalid(!attributes.has(name)
         && !/&(?!amp;|lt;|gt;|quot;|apos;|#[0-9]+;|#x[0-9a-fA-F]+;)/.test(value));
       for (const [,decimal,hex] of value.matchAll(/&#(?:([0-9]+)|x([0-9a-fA-F]+));/g)) {
         const unit = decimal===undefined ? Number.parseInt(hex,16) : Number(decimal);
         invalid(validXmlCodePoint(unit));
       }
-      end=attribute.index+attribute[0].length;
       attributes.set(name,value);
     }
-    invalid(attributes.size>0 && !tag[1].slice(end).trim());
+    invalid(attributes.size>0);
     nodes.push(attributes);
     if (!tag[2]) depth++;
   }
