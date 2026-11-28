@@ -1,7 +1,7 @@
 import {hasNativeAgentOwner} from './native-agent-authority.js';
 import {transaction} from '../execution-directory/store.js';
 
-const reserved=new Set(['native_agent','native_agent_resource_settlement','native_agent_resource_review']);
+const reserved=new Set(['native_agent','native_agent_resource_settlement','native_agent_resource_review','standalone_navigation_review_evidence']);
 export function assertNativeAgentResultWritable(result){
  if(result&&typeof result==='object'&&Object.keys(result).some(key=>reserved.has(key)))
   throw Object.assign(Error('native_agent_control_reserved'),{statusCode:409});

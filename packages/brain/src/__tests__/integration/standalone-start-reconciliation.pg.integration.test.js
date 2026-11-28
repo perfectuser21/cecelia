@@ -1,9 +1,11 @@
 import { afterEach, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
 import { foundationHttpFixture } from '../fixtures/workflow-foundation-http.js';
 import { prepareCollectionAccountFallbackDesktopReview, prepareCollectionOpenAppTimeoutReview, prepareCollectionReviewVideoTimeout, prepareDesktopCleanupReview } from '../fixtures/standalone-cleanup-review-fixture.js';
 import { createFoundationTask } from '../../workflow-foundation/registry.js';
 import { digest } from '../../orchestrator/commander-decision.js';
+import { assertNativeAgentResultWritable } from '../../lib/native-agent-task-control.js';
 
 const machine = 'us-mac-m4';
 const serial = 'fixture-physical-phone';
@@ -523,8 +525,18 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
 
-it('102 候选只读打开超时且已归位时结算原运行并安全释放租约', async () => {
-  const f = prepareCollectionReviewVideoTimeout(await desktopCleanupReview(true,'102'));
+it.each([false,true])('102 候选只读打开超时且已归位时结算原运行并安全释放租约，曾恢复账号=%s', async recoveredAccount => {
+  const f = prepareCollectionReviewVideoTimeout(await desktopCleanupReview(true,'102'),recoveredAccount);
+  if (recoveredAccount) {
+    const badNavigation = structuredClone(f.body);
+    badNavigation.review.cleanup_diagnostic.collection_review_video.account_recovery.tap = [1,1];
+    expect((await f.reconcile(badNavigation)).status).toBe(400);
+    const tooLarge = structuredClone(f.body);
+    tooLarge.review.cleanup_diagnostic.collection_review_video.leaf_ledger.gzip_base64 =
+      gzipSync(Buffer.alloc(100_000)).toString('base64');
+    expect((await f.reconcile(tooLarge)).status).toBe(400);
+    expect((await f.state()).status).toBe('blocked');
+  }
   const wrongVideo = structuredClone(f.body);
   wrongVideo.review.cleanup_diagnostic.collection_review_video.video_id = '2234567890123456789';
   expect((await f.reconcile(wrongVideo)).status).toBe(400);
@@ -547,12 +559,46 @@ it('102 候选只读打开超时且已归位时结算原运行并安全释放租
     'am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+id])).digest('hex');
   const replaceVideo = raw => raw.replaceAll(hash(videoId),hash(proof.video_id));
   Object.assign(diagnostic,f.seal(replaceVideo(diagnostic.raw)));
-  proof.leaf_ledger = f.seal(replaceVideo(proof.leaf_ledger.raw));
+  const ledger = recoveredAccount
+    ? gunzipSync(Buffer.from(proof.leaf_ledger.gzip_base64,'base64')).toString('utf8') : proof.leaf_ledger.raw;
+  const replaced = f.seal(replaceVideo(ledger));
+  proof.leaf_ledger = recoveredAccount
+    ? {gzip_base64:gzipSync(replaced.raw).toString('base64'),sha256:replaced.sha256} : replaced;
   expect((await f.reconcile(wrongProof)).status).toBe(409);
   expect((await f.state()).status).toBe('blocked');
   const wrongLease = structuredClone(f.body);
   wrongLease.review.cleanup_diagnostic.central_lease_version = '1';
   expect((await f.reconcile(wrongLease)).status).toBe(409);
+  if (recoveredAccount) {
+    expect((await f.reconcile()).status).toBe(409);
+    const proof = f.body.review.cleanup_diagnostic.collection_review_video;
+    const evidence = {
+      protocol:'standalone-navigation-review-evidence/v1',run_id:f.job.run_id,task_run_id:f.body.review.host_proof.task_run_id,
+      serial,profile:proof.profile,screen:proof.account_recovery.screen,frame_evidence_id:proof.account_recovery.back_id,
+      ledger_sha256:proof.leaf_ledger.sha256,frame_sha256:'e'.repeat(64),
+    };
+    const setEvidence = value => fixture.pool.query(
+      "UPDATE tasks SET result=result || jsonb_build_object('standalone_navigation_review_evidence',$2::jsonb) WHERE id=$1",
+      [f.task.id,JSON.stringify(value)]);
+    await setEvidence({...evidence,screen:[360,640]});
+    expect((await f.reconcile()).status).toBe(409);
+    await setEvidence({...evidence,ledger_sha256:'f'.repeat(64)});
+    expect((await f.reconcile()).status).toBe(409);
+    await setEvidence(evidence);
+    const route = `/runs/${f.job.run_id}/standalone-navigation-review-evidence`;
+    const body = {task_id:f.task.id,machine_id:machine,expected_receipt_sha256:f.body.expected_receipt_sha256,evidence};
+    expect((await fixture.request(route,body,{auth:false})).status).toBe(401);
+    expect(()=>assertNativeAgentResultWritable({standalone_navigation_review_evidence:evidence})).toThrow('native_agent_control_reserved');
+    expect((await f.reconcile()).status).toBe(409);
+    expect((await fixture.request(route,{...body,evidence:{...evidence,screen:[360,640]}})).status).toBe(409);
+    expect((await fixture.request(route,body)).status).toBe(200);
+    expect((await fixture.request(route,body)).body).toMatchObject({recorded:true,replayed:true});
+    expect((await f.reconcile(wrongProof)).body).toMatchObject({error:'standalone_start_review_navigation_evidence_conflict'});
+    await setEvidence({...evidence,ledger_sha256:replaced.sha256,recorded_by:'authenticated-operator'});
+    expect((await f.reconcile(wrongProof)).body).toMatchObject({error:'standalone_start_review_video_origin_conflict'});
+    await setEvidence({...evidence,recorded_by:'authenticated-operator'});
+    expect((await f.reconcile(wrongLease)).body).toMatchObject({error:'standalone_start_review_active_resources'});
+  }
   const result = await f.reconcile();
   expect(result.status,JSON.stringify(result.body)).toBe(200);
   expect(result.body).toMatchObject({status:'failed',retry_safe:false,replayed:false});

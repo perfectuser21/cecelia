@@ -104,6 +104,44 @@ function verifyRequest(runId, input) {
   return { failureReason: startFailure, hardwareTimeout: verifyHardwareTimeout(review,input.task_id) };
 }
 
+export async function recordStandaloneNavigationReviewEvidence(pool,runId,input,{principal}={}) {
+  requireFoundation(principal==='authenticated-operator','standalone_start_review_auth_required',401);
+  validateMachineRequest(input,['task_id','machine_id','expected_receipt_sha256','evidence']);
+  const evidence=input.evidence;
+  onlyKeys(evidence,['protocol','run_id','task_run_id','serial','profile','screen','frame_evidence_id','ledger_sha256','frame_sha256']);
+  invalid(UUID.test(runId??'') && UUID.test(input.task_id??'') && UUID.test(evidence.task_run_id??'')
+    && evidence.protocol==='standalone-navigation-review-evidence/v1' && evidence.run_id===runId
+    && typeof evidence.serial==='string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(evidence.serial)
+    && typeof evidence.profile==='string' && /^[A-Za-z0-9_-]{1,80}$/.test(evidence.profile)
+    && Array.isArray(evidence.screen) && evidence.screen.length===2
+    && evidence.screen.every(value=>Number.isSafeInteger(value) && value>0 && value<=8192)
+    && typeof evidence.frame_evidence_id==='string' && evidence.frame_evidence_id.startsWith(runId+'-')
+    && /^[A-Za-z0-9_-]{1,120}$/.test(evidence.frame_evidence_id)
+    && [input.expected_receipt_sha256,evidence.ledger_sha256,evidence.frame_sha256].every(hardwareHash));
+  return foundationTransaction(pool,'notion-standalone:'+input.machine_id,async db=>{
+    const task=(await db.query("SELECT * FROM tasks WHERE id=$1 AND task_type='workflow_dispatch' AND payload->>'source'='notion_leadgen_102' FOR UPDATE",[input.task_id])).rows[0];
+    const claim=task?.result?.standalone_claim,receipt=task?.result?.standalone_receipt;
+    const attestation=task?.result?.codex_skill_direct,scope=task?.payload?.scope;
+    check(task?.status==='blocked' && task.blocked_reason==='needs_review' && claim?.run_id===runId
+      && claim.machine_id===input.machine_id && task.claimed_by===claim.claimer
+      && receipt?.task_id===task.id && receipt.run_id===runId && receipt.status==='needs_review'
+      && receipt.reason===desktopCleanupFailure && Array.isArray(receipt.evidence) && receipt.evidence.length===0
+      && digest(receipt)===input.expected_receipt_sha256 && attestation?.task_run_id===evidence.task_run_id
+      && scope?.serial===evidence.serial && scope.profile===evidence.profile);
+    const original=(await db.query('SELECT status,ended_at FROM task_runs WHERE id=$1 AND task_id=$2 AND run_id=$3 FOR UPDATE',
+      [evidence.task_run_id,task.id,runId])).rows[0];
+    check(original?.status==='running' && original.ended_at===null);
+    const key='standalone_navigation_review_evidence';
+    const {recorded_by:writer,...previous}=task.result[key]??{};
+    if (task.result[key]) check(digest(previous)===digest(evidence) && (writer===undefined || writer===principal),
+      'standalone_start_review_navigation_evidence_conflict');
+    const registered={...evidence,recorded_by:principal};
+    if (writer===undefined) await db.query("UPDATE tasks SET result=result || jsonb_build_object($2::text,$3::jsonb) WHERE id=$1",
+      [task.id,key,JSON.stringify(registered)]);
+    return {task_id:task.id,run_id:runId,recorded:true,replayed:writer===principal,evidence_sha256:digest(registered)};
+  });
+}
+
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
@@ -151,6 +189,16 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       check(task.status === 'failed' && run.status === 'failed' && run.ended_at && previous.request_sha256 === requestSha
         && digest(run.result?.standalone_start_review ?? null) === digest(previous));
       return response(true);
+    }
+    const navigationFrame = cleanup?.videoProof?.navigationFrame;
+    if (navigationFrame) {
+      const prior = task.result.standalone_navigation_review_evidence;
+      check(prior?.protocol==='standalone-navigation-review-evidence/v1' && prior.recorded_by===principal && prior.run_id===runId && prior.task_run_id===run.id
+        && prior.serial===scope.serial && prior.profile===scope.profile && prior.frame_evidence_id===navigationFrame.id
+        && Array.isArray(prior.screen) && prior.screen.length===2
+        && prior.screen.every((value,index)=>value===navigationFrame.screen[index])
+        && prior.ledger_sha256===cleanup.videoProof.ledgerSha256 && typeof prior.frame_sha256==='string' && hash.test(prior.frame_sha256),
+      'standalone_start_review_navigation_evidence_conflict');
     }
     check(task.status === 'blocked' && task.blocked_reason === 'needs_review' && task.claimed_by === claim.claimer
       && task.claimed_at?.toISOString() === claim.claimed_at && run.status === 'running' && run.ended_at === null
@@ -209,6 +257,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       ...(cleanup?.accountReadProof ? { collection_account_read_timeout_sha256:cleanup.accountReadProof.sha256 } : {}),
       ...(collectionAccountFallback ? { collection_account_fallback_cleanup_sha256:cleanup.ledgerSha256 } : {}),
       ...(cleanup?.videoProof ? { collection_review_video_timeout_sha256:cleanup.videoProof.sha256 } : {}),
+      ...(navigationFrame ? { navigation_review_frame_sha256:task.result.standalone_navigation_review_evidence.frame_sha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
         central_release_performed:releaseCentral } : {}) };

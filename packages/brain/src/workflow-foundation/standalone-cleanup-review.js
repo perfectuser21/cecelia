@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { gunzipSync } from 'node:zlib';
 import { onlyKeys, requireFoundation } from './contracts.js';
 import { collectionAccountFallbackCommands, collectionAccountFallbackReview } from './standalone-account-fallback-review.js';
 import { collectionReviewVideo, collectionReviewVideoCommands } from './standalone-review-video-evidence.js';
@@ -283,23 +284,53 @@ function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null, missingUiStat
   }
 }
 
+function unpackNavigationLedger(proof) {
+  onlyKeys(proof,['gzip_base64','sha256']);
+  const encoded = proof.gzip_base64;
+  invalid(typeof encoded==='string' && encoded.length<=40_960 && /^[A-Za-z0-9+/]+={0,2}$/.test(encoded));
+  const gzip = Buffer.from(encoded,'base64');
+  invalid(gzip.toString('base64')===encoded);
+  let raw;
+  try {
+    raw = gunzipSync(gzip,{maxOutputLength:98_304}).toString('utf8');
+  } catch {
+    invalid(false);
+  }
+  return {raw,sha256:proof.sha256};
+}
+
 function verifyCollectionReviewVideo(proof, review, host, target, leaves) {
-  onlyKeys(proof,['raw','sha256','profile','account_evidence_id','video_id','leaf_ledger']);
+  onlyKeys(proof,['raw','sha256','profile','account_evidence_id','video_id','leaf_ledger','account_recovery']);
+  const commands = collectionReviewVideoCommands(proof,host.run_id,target);
   const records = readJsonl(proof,4096);
-  invalid(records.length===3);
-  const [accountRequired,...terminal] = records;
-  onlyKeys(accountRequired,['operation','code','at']);
-  invalid(accountRequired.operation==='business' && accountRequired.code==='STANDALONE_COLLECTION_ACCOUNT_REQUIRED'
-    && validTime(accountRequired.at) && Date.parse(accountRequired.at)<=Date.parse(review.revocation.observed_at)
-    && Date.parse(accountRequired.at)>=leaves[0].intent_at);
-  const {stdout,stderr} = controllerFailure(terminal[0],124);
-  invalid(stdout==='' && stderr===[
+  const recovered = proof.account_recovery!==undefined;
+  invalid(records.length===(recovered?2:3));
+  if (!recovered) {
+    const accountRequired = records.shift();
+    onlyKeys(accountRequired,['operation','code','at']);
+    invalid(accountRequired.operation==='business' && accountRequired.code==='STANDALONE_COLLECTION_ACCOUNT_REQUIRED'
+      && validTime(accountRequired.at) && Date.parse(accountRequired.at)<=Date.parse(review.revocation.observed_at)
+      && Date.parse(accountRequired.at)>=leaves[0].intent_at);
+  }
+  const {stdout,stderr} = controllerFailure(records[0],124);
+  const terminal = [
     'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+host.run_id,
     'guarded command timeout: whole command and children terminated; owner lock retained','',
-  ].join('\n'));
-  verifyControllerRevocation(terminal,['inspect'],review);
-  const commands = collectionReviewVideoCommands(proof,host.run_id,target);
-  return {profile:proof.profile,videoId:proof.video_id,sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,true,65_536)};
+  ].join('\n');
+  if (recovered) {
+    const [idle,...tail] = stderr.split('\n');
+    const prefix = 'paused-idle: phase=paused-douyin evidence_id='+proof.account_recovery.open_evidence_id+'-gate-fg1 attempt=1 dump_rc=0 elapsed_ms=';
+    invalid(idle.startsWith(prefix) && /^[0-9]{1,6}; could not get idle state; no fresh XML; using single toggle-dump-toggle$/.test(idle.slice(prefix.length))
+      && tail.join('\n')===terminal);
+  } else {
+    invalid(stderr===terminal);
+  }
+  invalid(stdout==='');
+  verifyControllerRevocation(records,['inspect'],review);
+  const ledger = recovered ? unpackNavigationLedger(proof.leaf_ledger) : proof.leaf_ledger;
+  return {profile:proof.profile,videoId:proof.video_id,sha256:proof.sha256,
+    ledgerSha256:verifyLeafLedger(ledger,leaves,commands,true,recovered?98_304:65_536),
+    ...(recovered?{navigationFrame:{id:proof.account_recovery.back_id,screen:proof.account_recovery.screen}}:{})};
 }
 
 export function verifyDesktopCleanupProof(review, host) {
@@ -313,6 +344,7 @@ export function verifyDesktopCleanupProof(review, host) {
   const accountNavigation=collectionAccountRead && accountRead?.account_navigation!==undefined;
   const collectionFallback = review.protocol === collectionAccountFallbackReview;
   const videoReview = review.protocol === collectionReviewVideo;
+  const videoNavigation = videoReview && video?.account_recovery!==undefined;
   const collection=collectionOpenApp||collectionAccountRead||videoReview;
   invalid(videoReview ? video!==undefined : video===undefined);
   invalid(collectionFallback ? fallback!==undefined && ledger!==undefined && account===undefined
@@ -329,7 +361,7 @@ export function verifyDesktopCleanupProof(review, host) {
     : controller===undefined && (!accountRefused || ledger===undefined));
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
-  invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= (collectionFallback || videoReview ? 24_576 : accountNavigation ? 20_480 : collectionAccountRead ? 12288 : 8192) && sha(raw) === sha256
+  invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= (videoNavigation ? 49_152 : collectionFallback || videoReview ? 24_576 : accountNavigation ? 20_480 : collectionAccountRead ? 12288 : 8192) && sha(raw) === sha256
     && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
     && typeof version === 'string' && /^[0-9]{1,12}$/.test(version));
   onlyKeys(desktop,['serial','default_home','focused_activity','observed_at']);
@@ -359,12 +391,12 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionFallback ? 68 : videoReview ? 62 : accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionFallback ? 68 : videoNavigation ? 114 : videoReview ? 62 : accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionFallback ? [34] : videoReview ? [61] : collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionFallback ? [34] : videoNavigation ? [34,105] : videoReview ? [61] : collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
