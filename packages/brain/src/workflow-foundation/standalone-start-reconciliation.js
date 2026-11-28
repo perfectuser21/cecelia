@@ -125,7 +125,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
-    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile;
+    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile ?? released?.accountProfile;
     if(collectionProfile!==undefined)check(collectionProfile===scope.profile);
     const preflight = cleanup?.preflightProof, account = cleanup?.accountProof;
     const snapshot = (preflight ?? account)?.snapshot;
