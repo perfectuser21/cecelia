@@ -141,7 +141,7 @@ export function prepareCollectionAccountFallbackDesktopReview(f) {
   return f;
 }
 
-export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false) {
+export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false, linkAfterOpen = false) {
   const {review} = f.body, profile = 'fixture-cloud', videoId = '1234567890123456789';
   const accountId = f.job.run_id+'-account';
   const t = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
@@ -161,7 +161,7 @@ export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false)
   const mediaDirectory = '/private/tmp/openclaw-phone/evidence/'+profile+'/';
   const navigation = {snapshot_id:f.job.run_id+'-shot',
     back_id:f.job.run_id+'-returned',open_evidence_id:f.job.run_id+'-video-open',screen:[720,1280],tap:[648,1173]};
-  const failures = recoveredAccount ? [35,106] : [native.length];
+  const failures = linkAfterOpen ? [35,125,131,137] : recoveredAccount ? [35,106] : [native.length];
   if (recoveredAccount) {
     const route = [v,v,state,v], identify = [...route,model,v];
     const absent = send(`if [ ! -e '${ui}' ] && [ ! -L '${ui}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`);
@@ -173,7 +173,15 @@ export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false)
       ...route,shot,v,pullImage(navigation.snapshot_id),
       ...route,window,v,send('input','keyevent','4'),v,window,v,shot,v,pullImage(navigation.back_id),
       ...route,window,v,send('input','tap',...navigation.tap.map(String)),...account);
-    native.push(v,absent,v,send('input','keyevent','85'),v,remove,v,dump);
+    if (linkAfterOpen) {
+      native.splice(81);
+      native.push(...identify,send('am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+videoId),
+        v,window,v,window,v,send('input','keyevent','127'),v,window,v,remove,v,dump,v,size,v,
+        [...t,'pull',ui,mediaDirectory+navigation.open_evidence_id+'-openvideo-w1.xml'],
+        v,window,v,[...t,'exec-out','screencap','-p'],v,window,
+        ...identify,window,v,send('input','keyevent','127'),v,
+        remove,v,dump,v,size,v,remove,v,dump,v,size,v,remove,v,dump,v,size,v,send('input','keyevent','85'),v);
+    } else native.push(v,absent,v,send('input','keyevent','85'),v,remove,v,dump);
   }
   const prototype = f.cleanup.leaves.leaves[0];
   const leaves = native.map((argv,index)=>({...prototype,sequence:index+1,pid:prototype.pid+index,code:failures.includes(index+1)?1:0,
@@ -183,7 +191,7 @@ export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false)
     const intent={sequence,argv_sha256,intent_at,boundary};
     return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
   });
-  ledger.push({...leaves.at(-1),phase:'unknown'});
+  ledger.push(linkAfterOpen ? {phase:'unknown'} : {...leaves.at(-1),phase:'unknown'});
   Object.assign(f.cleanup.leaves,{complete:false,requests_returned:false,leaves});
   const at = review.observed_at;
   Object.assign(review,{protocol:'standalone-collection-review-video-timeout/v1',admission_code:'TOOL_RESULT_UNKNOWN'});
@@ -198,14 +206,15 @@ export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false)
   ];
   if (recoveredAccount) {
     controller.shift();
-    controller[0].diagnostic.stderr=`paused-idle: phase=paused-douyin evidence_id=${navigation.open_evidence_id}-gate-fg1 attempt=1 dump_rc=0 elapsed_ms=58766; could not get idle state; no fresh XML; using single toggle-dump-toggle\n`
+    if (linkAfterOpen) controller[1].operation='native-readback';
+    else controller[0].diagnostic.stderr=`paused-idle: phase=paused-douyin evidence_id=${navigation.open_evidence_id}-gate-fg1 attempt=1 dump_rc=0 elapsed_ms=58766; could not get idle state; no fresh XML; using single toggle-dump-toggle\n`
       +controller[0].diagnostic.stderr;
   }
   const jsonl = rows => rows.map(x=>JSON.stringify(x)).join('\n')+'\n';
   const ledgerProof = f.seal(jsonl(ledger));
   Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
     collection_review_video:{...f.seal(jsonl(controller)),profile,account_evidence_id:accountId,video_id:videoId,
-      ...(recoveredAccount?{account_recovery:navigation}:{}),leaf_ledger:recoveredAccount
+      ...(recoveredAccount?{account_recovery:navigation}:{}),...(linkAfterOpen?{link_after_open:true}:{}),leaf_ledger:recoveredAccount
         ? {gzip_base64:gzipSync(ledgerProof.raw).toString('base64'),sha256:ledgerProof.sha256} : ledgerProof},
   });
   return f;

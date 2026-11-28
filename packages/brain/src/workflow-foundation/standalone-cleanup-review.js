@@ -40,8 +40,9 @@ function verifyLeafLedger(ledger, leaves, commands, terminalAckMissing, maxBytes
     const intent={sequence,argv_sha256,intent_at,boundary};
     return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
   });
-  // Only the last leaf may have lost its response handshake.
-  if(terminalAckMissing)expected.push({...leaves.at(-1),phase:'unknown'});
+  // These distinguished trajectories lost either the outer acknowledgment or the last leaf's handshake.
+  if(terminalAckMissing==='outer')expected.push({phase:'unknown'});
+  else if(terminalAckMissing)expected.push({...leaves.at(-1),phase:'unknown'});
   invalid(isDeepStrictEqual(records,expected));
   return ledger.sha256;
 }
@@ -284,7 +285,7 @@ function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null, missingUiStat
   }
 }
 
-function unpackNavigationLedger(proof) {
+function unpackNavigationLedger(proof, maxBytes) {
   onlyKeys(proof,['gzip_base64','sha256']);
   const encoded = proof.gzip_base64;
   invalid(typeof encoded==='string' && encoded.length<=40_960 && /^[A-Za-z0-9+/]+={0,2}$/.test(encoded));
@@ -292,7 +293,7 @@ function unpackNavigationLedger(proof) {
   invalid(gzip.toString('base64')===encoded);
   let raw;
   try {
-    raw = gunzipSync(gzip,{maxOutputLength:98_304}).toString('utf8');
+    raw = gunzipSync(gzip,{maxOutputLength:maxBytes}).toString('utf8');
   } catch {
     invalid(false);
   }
@@ -300,10 +301,12 @@ function unpackNavigationLedger(proof) {
 }
 
 function verifyCollectionReviewVideo(proof, review, host, target, leaves) {
-  onlyKeys(proof,['raw','sha256','profile','account_evidence_id','video_id','leaf_ledger','account_recovery']);
+  onlyKeys(proof,['raw','sha256','profile','account_evidence_id','video_id','leaf_ledger','account_recovery','link_after_open']);
+  const recovered = proof.account_recovery!==undefined;
+  const linkAfterOpen = proof.link_after_open===true;
+  invalid(proof.link_after_open===undefined || linkAfterOpen && recovered);
   const commands = collectionReviewVideoCommands(proof,host.run_id,target);
   const records = readJsonl(proof,4096);
-  const recovered = proof.account_recovery!==undefined;
   invalid(records.length===(recovered?2:3));
   if (!recovered) {
     const accountRequired = records.shift();
@@ -317,7 +320,7 @@ function verifyCollectionReviewVideo(proof, review, host, target, leaves) {
     'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+host.run_id,
     'guarded command timeout: whole command and children terminated; owner lock retained','',
   ].join('\n');
-  if (recovered) {
+  if (recovered && !linkAfterOpen) {
     const [idle,...tail] = stderr.split('\n');
     const prefix = 'paused-idle: phase=paused-douyin evidence_id='+proof.account_recovery.open_evidence_id+'-gate-fg1 attempt=1 dump_rc=0 elapsed_ms=';
     invalid(idle.startsWith(prefix) && /^[0-9]{1,6}; could not get idle state; no fresh XML; using single toggle-dump-toggle$/.test(idle.slice(prefix.length))
@@ -326,10 +329,11 @@ function verifyCollectionReviewVideo(proof, review, host, target, leaves) {
     invalid(stderr===terminal);
   }
   invalid(stdout==='');
-  verifyControllerRevocation(records,['inspect'],review);
-  const ledger = recovered ? unpackNavigationLedger(proof.leaf_ledger) : proof.leaf_ledger;
+  verifyControllerRevocation(records,[linkAfterOpen?'native-readback':'inspect'],review);
+  const maxLedgerBytes = linkAfterOpen ? 114_688 : recovered ? 98_304 : 65_536;
+  const ledger = recovered ? unpackNavigationLedger(proof.leaf_ledger,maxLedgerBytes) : proof.leaf_ledger;
   return {profile:proof.profile,videoId:proof.video_id,sha256:proof.sha256,
-    ledgerSha256:verifyLeafLedger(ledger,leaves,commands,true,recovered?98_304:65_536),
+    ledgerSha256:verifyLeafLedger(ledger,leaves,commands,linkAfterOpen?'outer':true,maxLedgerBytes),
     ...(recovered?{navigationFrame:{id:proof.account_recovery.back_id,screen:proof.account_recovery.screen}}:{})};
 }
 
@@ -345,6 +349,7 @@ export function verifyDesktopCleanupProof(review, host) {
   const collectionFallback = review.protocol === collectionAccountFallbackReview;
   const videoReview = review.protocol === collectionReviewVideo;
   const videoNavigation = videoReview && video?.account_recovery!==undefined;
+  const videoLink = videoNavigation && video.link_after_open===true;
   const collection=collectionOpenApp||collectionAccountRead||videoReview;
   invalid(videoReview ? video!==undefined : video===undefined);
   invalid(collectionFallback ? fallback!==undefined && ledger!==undefined && account===undefined
@@ -391,12 +396,12 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionFallback ? 68 : videoNavigation ? 114 : videoReview ? 62 : accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionFallback ? 68 : videoLink ? 140 : videoNavigation ? 114 : videoReview ? 62 : accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionFallback ? [34] : videoNavigation ? [34,105] : videoReview ? [61] : collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionFallback ? [34] : videoLink ? [34,124,130,136] : videoNavigation ? [34,105] : videoReview ? [61] : collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
