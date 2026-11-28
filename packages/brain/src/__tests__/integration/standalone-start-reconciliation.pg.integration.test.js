@@ -522,6 +522,16 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
 
+it('102 结算及时处理含合法长空白的账号控件树', async () => {
+  const f = prepareCollectionOpenAppTimeoutReview(await desktopCleanupReview(false,'102'), {
+    uiProfile: 'fixture-cloud', accountRead: true, accountNavigation: true, trailingAttributePadding: 32_000,
+  });
+  const start = performance.now();
+  const result = await f.reconcile();
+  expect(result.status, JSON.stringify(result.body)).toBe(200);
+  expect(performance.now() - start).toBeLessThan(400);
+});
+
 it.each([{}, { uiProfile:'fixture-cloud' }, { uiProfile:'fixture-cloud', accountRead:true }, { uiProfile:'fixture-cloud', accountRead:true, accountNavigation:true }])('102 受管手机超时后，仅凭原回执和现场归位结算 %j',async(options)=>{
   const f = prepareCollectionOpenAppTimeoutReview(await desktopCleanupReview(false,'102'),options);
   const pending = await f.submit();
