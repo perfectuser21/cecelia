@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { onlyKeys, requireFoundation } from './contracts.js';
 import { collectionAccountFallbackCommands, collectionAccountFallbackReview } from './standalone-account-fallback-review.js';
+import { collectionReviewVideo, collectionReviewVideoCommands } from './standalone-review-video-evidence.js';
 
 export const desktopCleanupFailure = 'standalone_cleanup_unconfirmed';
 export const desktopUnknown = 'DESKTOP_UNKNOWN';
@@ -282,17 +283,38 @@ function verifyReturnedLeaves(leaves, cutoff, acceptedArgv = null, missingUiStat
   }
 }
 
+function verifyCollectionReviewVideo(proof, review, host, target, leaves) {
+  onlyKeys(proof,['raw','sha256','profile','account_evidence_id','video_id','leaf_ledger']);
+  const records = readJsonl(proof,4096);
+  invalid(records.length===3);
+  const [accountRequired,...terminal] = records;
+  onlyKeys(accountRequired,['operation','code','at']);
+  invalid(accountRequired.operation==='business' && accountRequired.code==='STANDALONE_COLLECTION_ACCOUNT_REQUIRED'
+    && validTime(accountRequired.at) && Date.parse(accountRequired.at)<=Date.parse(review.revocation.observed_at)
+    && Date.parse(accountRequired.at)>=leaves[0].intent_at);
+  const {stdout,stderr} = controllerFailure(terminal[0],124);
+  invalid(stdout==='' && stderr===[
+    'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+host.run_id,
+    'guarded command timeout: whole command and children terminated; owner lock retained','',
+  ].join('\n'));
+  verifyControllerRevocation(terminal,['inspect'],review);
+  const commands = collectionReviewVideoCommands(proof,host.run_id,target);
+  return {profile:proof.profile,videoId:proof.video_id,sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,true,65_536)};
+}
+
 export function verifyDesktopCleanupProof(review, host) {
   const artifact = review.cleanup_diagnostic;
   onlyKeys(artifact,['raw','sha256','adb_endpoint','adb_serial','central_lease_version','desktop_readback',
-    'terminal_ack_ledger','preflight_timeout','account_foreground_refusal','open_app_timeout','account_read_timeout','account_fallback']);
+    'terminal_ack_ledger','preflight_timeout','account_foreground_refusal','open_app_timeout','account_read_timeout','account_fallback','collection_review_video']);
   const { raw, sha256, adb_endpoint: endpoint, adb_serial: serial, central_lease_version: version, desktop_readback: desktop,
-    terminal_ack_ledger:ledger,preflight_timeout:controller,account_foreground_refusal:account,open_app_timeout:openApp,account_read_timeout:accountRead,account_fallback:fallback } = artifact;
+    terminal_ack_ledger:ledger,preflight_timeout:controller,account_foreground_refusal:account,open_app_timeout:openApp,account_read_timeout:accountRead,account_fallback:fallback,collection_review_video:video } = artifact;
   const collectionOpenApp = review.protocol === collectionOpenAppReview;
   const collectionAccountRead=review.protocol === collectionAccountReadReview;
   const accountNavigation=collectionAccountRead && accountRead?.account_navigation!==undefined;
   const collectionFallback = review.protocol === collectionAccountFallbackReview;
-  const collection=collectionOpenApp||collectionAccountRead;
+  const videoReview = review.protocol === collectionReviewVideo;
+  const collection=collectionOpenApp||collectionAccountRead||videoReview;
+  invalid(videoReview ? video!==undefined : video===undefined);
   invalid(collectionFallback ? fallback!==undefined && ledger!==undefined && account===undefined
     && review.admission_code===desktopUnknown : fallback===undefined);
   invalid(collectionOpenApp ? openApp !== undefined : openApp === undefined);
@@ -307,7 +329,7 @@ export function verifyDesktopCleanupProof(review, host) {
     : controller===undefined && (!accountRefused || ledger===undefined));
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
-  invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= (collectionFallback ? 24_576 : accountNavigation ? 20_480 : collectionAccountRead ? 12288 : 8192) && sha(raw) === sha256
+  invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= (collectionFallback || videoReview ? 24_576 : accountNavigation ? 20_480 : collectionAccountRead ? 12288 : 8192) && sha(raw) === sha256
     && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
     && typeof version === 'string' && /^[0-9]{1,12}$/.test(version));
   onlyKeys(desktop,['serial','default_home','focused_activity','observed_at']);
@@ -328,7 +350,7 @@ export function verifyDesktopCleanupProof(review, host) {
   const ledgerDirectory = host.run_directory + '/standalone-leaves/';
   onlyKeys(seal,['complete','empty_complete','requests_returned','empty_requests_returned','epoch_fence_lost','leaves','ledger']);
   const collectionPostReturn=collectionOpenApp && openApp.ui_profile!==undefined;
-  const allReturned=ledger===undefined && !collectionPostReturn && !collectionAccountRead;
+  const allReturned=ledger===undefined && !collectionPostReturn && !collectionAccountRead && !videoReview;
   invalid(original.task_id === host.task_id && original.run_id === host.run_id
     && original.execution_mode === 'codex-direct' && original.native_return_unknown === true
     && original.quarantine_verified === true && original.local_released === false
@@ -337,18 +359,21 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionFallback ? 68 : accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionFallback ? 68 : videoReview ? 62 : accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionFallback ? [34] : collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionFallback ? [34] : videoReview ? [61] : collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
   const startup=[versionProbe,versionProbe,[...target,'get-state'],versionProbe];
-  let ledgerSha256,accountProof,openAppProof,accountReadProof;
-  if (collectionFallback) {
+  let ledgerSha256,accountProof,openAppProof,accountReadProof,videoProof;
+  if (videoReview) {
+    videoProof=verifyCollectionReviewVideo(video,review,host,target,seal.leaves);
+    ledgerSha256=videoProof.ledgerSha256;
+  } else if (collectionFallback) {
     const commands = collectionAccountFallbackCommands(fallback, host.run_id, target);
     ledgerSha256 = verifyLeafLedger(ledger,seal.leaves,commands,false,65_536);
   } else if (collectionOpenApp) {
@@ -368,7 +393,7 @@ export function verifyDesktopCleanupProof(review, host) {
     ledgerSha256=verifyLeafLedger(ledger,seal.leaves,commands,true);
   }
   const preflightProof=preflight ? verifyPreflightTimeout(controller,review,host,desktop.serial) : undefined;
-  return { sha256, ledgerSha256, preflightProof, accountProof, openAppProof, accountReadProof, fallbackProfile:fallback?.profile, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
+  return { sha256, ledgerSha256, preflightProof, accountProof, openAppProof, accountReadProof, videoProof, fallbackProfile:fallback?.profile, firstIntentAt: seal.leaves[0].intent_at, serial: desktop.serial, leaseVersion: version };
 }
 
 export function verifyReleasedCleanupProof(review, host, blockedAt) {
