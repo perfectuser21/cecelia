@@ -285,6 +285,59 @@ it.each([
 },30000);
 
 it.each([
+ ['101','douyin_video_discovery','关键词：验收'],
+ ['102','douyin_video_processing','来源运行：accepted-discovery-101'],
+])('Notion %s 使用受信发布目标在实体 M4 派单和领单',async(stage,workflowKey,fields)=>{
+ fixture=await foundationHttpFixture({workflowKey,releaseTarget:'xian-m4',directInput:true});
+ const {registration,release}=await fixture.publish();
+ const pageId=randomUUID(),tenantId=randomUUID();
+ const request={stage,pageId,title:'实体 M4 验收',body:'公司：悦升\n'+fields,tenantId:'default',sourceDatabaseId:ENGLISH_TASKS_DB,
+  bindings:{悦升:{source_tenant_id:'default',tenant_id:tenantId,...(stage==='101'?{}:{source_tenant_stage:stage}),
+   workflow_id:registration.workflow_id,release_id:release.id,binding_key:'approved-'+stage}}};
+ const {taskId}=await dispatchNotionLeadgen(fixture.pool,request);
+ const replay=await dispatchNotionLeadgen(fixture.pool,request);
+ expect(replay.taskId).toBe(taskId);
+ const task=(await fixture.pool.query('SELECT tenant_id,payload FROM tasks WHERE id=$1',[taskId])).rows[0];
+ expect(task).toMatchObject({tenant_id:tenantId,payload:{notion_page_id:pageId,source:'notion_leadgen_'+stage,
+  foundation_request:{machine_id:'xian-mac-m4'},workflow_definition:{release_id:release.id}}});
+ const claim=machine_id=>fixture.request('/workflow-foundation/standalone/claim',{machine_id,sources:['notion_leadgen_'+stage]});
+ expect((await claim('us-mac-m4')).body).toEqual({job:null});
+ const receipts=await Promise.all([claim('xian-mac-m4'),claim('xian-mac-m4')]);
+ const jobs=receipts.flatMap(result=>result.body.job?[result.body.job]:[]);
+ expect(jobs).toHaveLength(1);
+ expect(jobs[0]).toMatchObject({task_id:taskId,machine_id:'xian-mac-m4',release_id:release.id});
+ const job=jobs[0];
+ const sourceCommit='b'.repeat(40);
+ const started=await fixture.request('/runs/'+job.run_id+'/start-skill',{
+  task_id:taskId,claimer:job.claimer,claimed_at:job.claimed_at,
+  definition:{...job.definition,attempt_key:taskId+':1',actor:job.claimer},
+  standalone:{
+   scope:{workflow_key:workflowKey,source_commit:sourceCommit,approved_keywords:stage==='101'?['验收']:[],limit:1,
+    ...(stage==='102'?{source_run:'accepted-discovery-101'}:{}),
+    company:{company_id:randomUUID(),tenant_id:tenantId,version:1,policy_id:'fixture'}},
+   skill:{name:'douyin-leadgen-direct',version:'1.0.0',source_commit:sourceCommit,path:'skill/SKILL.md',sha256:'b'.repeat(64)},
+  },
+ });
+ expect(started.status,JSON.stringify(started.body)).toBe(201);
+ expect(started.body.task_run_id).toBeTruthy();
+},30000);
+
+it.each([
+ ['103','douyin_comment_scoring',{source_run:'collection-source'}],
+ ['104','douyin_lead_outreach',{order_id:'recFixtureOrder'}],
+])('Notion %s 不会因手机路由修复而承接未批准的实体发布',async(stage,workflowKey,business)=>{
+ fixture=await foundationHttpFixture({workflowKey,releaseTarget:'xian-m4',directInput:true});
+ const {registration,release}=await fixture.publish();
+ const notionPageId=randomUUID();
+ await expect(createFoundationTask(fixture.pool,{
+  workflow_id:registration.workflow_id,release_id:release.id,input:{binding_key:'test_phone',business},
+  idempotency_key:'notion-'+stage+':'+notionPageId,
+ },{notionPageId,notionTenantId:'tenant-fixture',notionWorkflowKey:workflowKey}))
+  .rejects.toMatchObject({code:'standalone_release_target_invalid'});
+ expect((await fixture.pool.query("SELECT id FROM tasks WHERE payload->>'notion_page_id'=$1",[notionPageId])).rows).toEqual([]);
+},30000);
+
+it.each([
  ['101','douyin_video_discovery',{keyword:'验收',max_candidates:1},['验收']],
  ['102','douyin_video_processing',{source_run:'discovery-source-1'},[]],
  ['103','douyin_comment_scoring',{source_run:'comment-source-1'},[]],
