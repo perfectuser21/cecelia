@@ -2,12 +2,20 @@ import { getRelease, getReleaseGate } from '../lib/release-index.js';
 import { digest } from '../orchestrator/commander-decision.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 
-export async function resolveStandaloneRelease(db, { workflow_id, release_id }, workflowKey, { target = 'mmv', machineId = 'us-mac-m4' } = {}) {
+const physicalPhoneWorkflows = new Set(['douyin_video_discovery', 'douyin_video_processing']);
+
+export async function resolveStandaloneRelease(db, { workflow_id, release_id }, workflowKey, route) {
   requireFoundation(UUID.test(workflow_id ?? '') && UUID.test(release_id ?? ''), 'foundation_identity_invalid', 400);
   const row = (await db.query('SELECT id,key,name,status FROM workflows WHERE id=$1', [workflow_id])).rows[0];
   requireFoundation(row && row.key === workflowKey, 'foundation_notion_workflow_invalid', 400);
   requireFoundation(row.status === 'active', 'foundation_workflow_not_active');
   const release = await getRelease(db, release_id);
+  // Notion intake and claims consume the same registered release and machine.
+  // Keep the existing Mac Studio default for workflows outside physical phone collection.
+  const physicalPhone = release.target === 'xian-m4' && physicalPhoneWorkflows.has(workflowKey);
+  const { target, machineId } = route ?? (physicalPhone
+    ? { target: 'xian-m4', machineId: 'xian-mac-m4' }
+    : { target: 'mmv', machineId: 'us-mac-m4' });
   requireFoundation(release.target === target, 'standalone_release_target_invalid');
   const workflow = release.payload.workflows.find(item => item.workflow_id === workflow_id);
   requireFoundation(workflow?.payload?.key === row.key, 'foundation_release_workflow_missing');

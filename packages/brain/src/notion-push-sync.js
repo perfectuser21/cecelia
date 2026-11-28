@@ -705,7 +705,7 @@ export async function ingestDelegatedPage(pool, token, page, opts = {}) {
           : `请填写公司和有效的${leadgenStage === '104' ? '原订单' : '来源运行'}`,
         foundation_release_not_ready: '执行版本尚未就绪',
         foundation_notion_workflow_invalid: '配置没有指向本单指定的 Workflow',
-        standalone_release_target_invalid: '业务发布未落在 Mac Studio 执行端',
+        standalone_release_target_invalid: '业务发布目标与此工作流允许的执行端不匹配',
         foundation_idempotency_conflict: '此 Notion 页已起单，需按原任务处理',
       };
       const reason = reasons[error.code];
