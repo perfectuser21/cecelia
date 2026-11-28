@@ -417,7 +417,7 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
 });
 
 
-it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snapshot'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
+it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snapshot', 'candidate-open'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
   const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
   const next = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -435,6 +435,7 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   const probe=[version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
     telephony,version,[...target,'shell','dumpsys','window','displays'],version,telephony];
   const snapshotMode = mode === 'account-snapshot';
+  const candidateMode = mode === 'candidate-open';
   const accountMode = mode === 'account-no-xml' || snapshotMode;
   const profile = (await f.state()).payload.scope.profile;
   const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
@@ -449,9 +450,22 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   const localShot = '/private/tmp/openclaw-phone/evidence/'+profile+'/'+snapshotId+'.png';
   const snapshot = [version,version,[...target,'get-state'],version,
     [...target,'shell','screencap','-p',remoteShot],version,[...target,'pull',remoteShot,localShot]];
+  const videoId = '1234567890123456789';
+  const accountId = f.job.run_id+'-account', openId = f.job.run_id+'-review';
+  const evidence = '/private/tmp/openclaw-phone/evidence/'+profile+'/';
+  const shell = (...args) => [...target,'shell',...args];
+  const hierarchy = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hierarchy rotation="0"><node bounds="[0,0][720,1280]"><node package="com.ss.android.ugc.aweme" enabled="true" content-desc="我，按钮" bounds="[630,1150][660,1190]"/></node></hierarchy>';
+  const identification = open.slice(0,6);
+  const uiCapture = [shell('rm','-f',xml),version,shell('uiautomator','dump','--compressed',xml),version,uiStat,version];
+  const candidate = [...probe,...open,...identification,foreground,version,foreground,version,...uiCapture,
+    [...target,'pull',xml,evidence+accountId+'-before.xml'],version,shell('input','tap','645','1170'),version,
+    ...uiCapture,[...target,'pull',xml,evidence+accountId+'-profile.xml'],
+    ...identification,shell('am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+videoId),
+    version,foreground,version,foreground,version,shell('input','keyevent','127'),version,foreground,version,...uiCapture,
+    [...target,'pull',xml,evidence+openId+'-openvideo-w1.xml'],version,foreground,version,[...target,'exec-out','screencap','-p'],version,foreground];
   const prelude={cleanup:[],launch:open,probes:[...probe,...probe],mixed:[...probe,...open,version],
     'account-no-xml':[...probe,...open,...account],
-    'account-snapshot':[...probe,...open,...account,...snapshot]}[mode];
+    'account-snapshot':[...probe,...open,...account,...snapshot], 'candidate-open':candidate}[mode];
   const commands = [...prelude,...cleanup];
   const sha = value => createHash('sha256').update(value).digest('hex');
   const boundary = 'darwin-sandbox-deny-process-fork-v1';
@@ -471,7 +485,11 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
         ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
     return {raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
       ...(accountMode?{account_profile:profile}:{}),
-      ...(snapshotMode?{account_snapshot_id:snapshotId}:{}),terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}};
+      ...(snapshotMode?{account_snapshot_id:snapshotId}:{}),
+      ...(candidateMode?{candidate_review:{profile,video_id:videoId,open_evidence_id:openId,
+        account_navigation:{evidence_id:accountId,hierarchy:{raw:hierarchy,sha256:sha(hierarchy)}}}}:{}),
+      terminal_ack_ledger:candidateMode ? {gzip_base64:gzipSync(ledger).toString('base64'),sha256:sha(ledger)}
+        : {raw:ledger,sha256:sha(ledger)}};
   };
   const {revocation,...review}=f.body.review;
   const body={...f.body,review:{...review,protocol:'standalone-released-no-effect-review/v1',admission_code:'CLEANUP_VERIFIED_NO_BUSINESS',
@@ -481,9 +499,11 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   const diagnostic = body.review.cleanup_diagnostic;
   expect((await f.reconcile({...body,review:{...body.review,local_lock:{owner:f.job.run_id,review_required:true}}})).status).toBe(400);
   expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,sha256:'0'.repeat(64)}}})).status).toBe(400);
-  const missingAck = diagnostic.terminal_ack_ledger.raw.trimEnd().split('\n').slice(0,-1).join('\n')+'\n';
+  const completeLedger = candidateMode ? gunzipSync(Buffer.from(diagnostic.terminal_ack_ledger.gzip_base64,'base64')).toString('utf8') : diagnostic.terminal_ack_ledger.raw;
+  const missingAck = completeLedger.trimEnd().split('\n').slice(0,-1).join('\n')+'\n';
   expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
-    terminal_ack_ledger:{raw:missingAck,sha256:sha(missingAck)}}}})).status).toBe(400);
+    terminal_ack_ledger:candidateMode ? {gzip_base64:gzipSync(missingAck).toString('base64'),sha256:sha(missingAck)}
+      : {raw:missingAck,sha256:sha(missingAck)}}}})).status).toBe(400);
   if (prelude.length) {
     const replaceCommand = (index,command) => commands.map((original,position)=>position===index?command:original);
     for (const invalidCommands of [
@@ -499,6 +519,11 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
         [...probe,...open,...account,...account,...cleanup],
         [...prelude.slice(0,-1),...cleanup],
       ]:[]),
+      ...(candidateMode?[
+        replaceCommand(38,shell('input','tap','640','1170')),
+        replaceCommand(53,shell('input','keyevent','85')),
+        [...prelude,shell('input','tap','200','300'),...cleanup],
+      ]:[]),
       ...(snapshotMode?[
         replaceCommand(prelude.length-1,[...target,'pull',remoteShot,localShot.replace(f.job.run_id,randomUUID())]),
         replaceCommand(prelude.length-1,[...target,'pull',remoteShot,'/tmp/foreign.png']),
@@ -513,6 +538,42 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
     central_lease_version:device.version+'0'}}})).status).toBe(409);
   expect(await f.state()).toMatchObject({status:'blocked'});
   expect(await f.run()).toMatchObject({status:'running'});
+  if(candidateMode){
+    expect(commands).toHaveLength(85);
+    expect((await f.reconcile(body)).body).toMatchObject({error:'standalone_start_review_navigation_evidence_conflict'});
+    const evidence = {
+      protocol:'standalone-navigation-review-evidence/v1',run_id:f.job.run_id,task_run_id:body.review.host_proof.task_run_id,
+      serial,profile,screen:[720,1280],frame_evidence_id:accountId,
+      frame_sha256:sha(hierarchy),ledger_sha256:diagnostic.terminal_ack_ledger.sha256,
+      cleanup_route:{adb_endpoint:endpoint,adb_serial:transport},
+    };
+    const route = `/runs/${f.job.run_id}/standalone-navigation-review-evidence`;
+    const anchor = {task_id:f.task.id,machine_id:machine,expected_receipt_sha256:body.expected_receipt_sha256,evidence};
+    expect((await fixture.request(route,anchor,{auth:false})).status).toBe(401);
+    expect((await fixture.request(route,anchor)).body).toMatchObject({recorded:true});
+    expect((await f.reconcile(body)).body).toMatchObject({error:'standalone_start_review_video_origin_conflict'});
+    const original=await f.state();
+    const {source_run:sourceRun, company, line}=original.payload.scope;
+    const producerId=randomUUID();
+    const upstream={task_id:producerId,run_id:sourceRun,status:'completed',business_pass:true,
+      receipts:[{activity_key:'collect_videos',status:'completed',outputs:{Video:[{
+        video_id:videoId,video_url:'https://www.douyin.com/video/'+videoId,line_key:line,author:'fixture author',
+        discovery_metrics:{digest:'a'.repeat(64),company_binding:{...company,line_key:line,run_id:sourceRun}},
+      }]}}]};
+    await fixture.pool.query("INSERT INTO tasks(id,title,status,payload,result,tenant_id) VALUES($1,'fixture 101','completed',$2,$3,$4)",
+      [producerId,{workflow_key:'douyin_video_discovery'},{foundation_result:upstream},original.tenant_id]);
+    await fixture.pool.query("INSERT INTO task_runs(task_id,run_id,status,ended_at) VALUES($1,$2,'success',NOW())",[producerId,sourceRun]);
+    const mutateEvidence = value => fixture.pool.query(
+      "UPDATE tasks SET result=result || jsonb_build_object('standalone_navigation_review_evidence',$2::jsonb) WHERE id=$1",
+      [f.task.id,JSON.stringify({...value,recorded_by:'authenticated-operator'})]);
+    await mutateEvidence({...evidence,cleanup_route:{adb_endpoint:'tcp:127.0.0.1:5044',adb_serial:transport}});
+    expect((await f.reconcile(body)).body).toMatchObject({error:'standalone_start_review_navigation_evidence_conflict'});
+    await mutateEvidence({...evidence,frame_sha256:'e'.repeat(64)});
+    expect((await f.reconcile(body)).body).toMatchObject({error:'standalone_start_review_navigation_evidence_conflict'});
+    await mutateEvidence(evidence);
+    expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:{...diagnostic,
+      central_lease_version:device.version+'0'}}})).body).toMatchObject({error:'standalone_start_review_active_resources'});
+  }
   const first = await f.reconcile(body);
   expect(first.status, JSON.stringify(first.body)).toBe(200);
   expect(first.body).toMatchObject({status:'failed',retry_safe:false,replayed:false});

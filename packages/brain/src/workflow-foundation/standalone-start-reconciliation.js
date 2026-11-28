@@ -108,7 +108,16 @@ export async function recordStandaloneNavigationReviewEvidence(pool,runId,input,
   requireFoundation(principal==='authenticated-operator','standalone_start_review_auth_required',401);
   validateMachineRequest(input,['task_id','machine_id','expected_receipt_sha256','evidence']);
   const evidence=input.evidence;
-  onlyKeys(evidence,['protocol','run_id','task_run_id','serial','profile','screen','frame_evidence_id','ledger_sha256','frame_sha256']);
+  onlyKeys(evidence,['protocol','run_id','task_run_id','serial','profile','screen','frame_evidence_id','ledger_sha256','frame_sha256','cleanup_route']);
+  const cleanupRoute=evidence.cleanup_route;
+  if (cleanupRoute!==undefined) {
+    onlyKeys(cleanupRoute,['adb_endpoint','adb_serial']);
+    const route = /^127\.0\.0\.1:([1-9][0-9]{0,4})$/;
+    const endpoint=typeof cleanupRoute.adb_endpoint==='string'&&cleanupRoute.adb_endpoint.startsWith('tcp:')
+      ? route.exec(cleanupRoute.adb_endpoint.slice(4)) : null;
+    const serial=typeof cleanupRoute.adb_serial==='string' ? route.exec(cleanupRoute.adb_serial) : null;
+    invalid(endpoint && Number(endpoint[1])<=65_535 && serial && Number(serial[1])<=65_535);
+  }
   invalid(UUID.test(runId??'') && UUID.test(input.task_id??'') && UUID.test(evidence.task_run_id??'')
     && evidence.protocol==='standalone-navigation-review-evidence/v1' && evidence.run_id===runId
     && typeof evidence.serial==='string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(evidence.serial)
@@ -125,7 +134,7 @@ export async function recordStandaloneNavigationReviewEvidence(pool,runId,input,
     check(task?.status==='blocked' && task.blocked_reason==='needs_review' && claim?.run_id===runId
       && claim.machine_id===input.machine_id && task.claimed_by===claim.claimer
       && receipt?.task_id===task.id && receipt.run_id===runId && receipt.status==='needs_review'
-      && receipt.reason===desktopCleanupFailure && Array.isArray(receipt.evidence) && receipt.evidence.length===0
+      && receipt.reason===(cleanupRoute===undefined ? desktopCleanupFailure : businessUnconfirmed) && Array.isArray(receipt.evidence) && receipt.evidence.length===0
       && digest(receipt)===input.expected_receipt_sha256 && attestation?.task_run_id===evidence.task_run_id
       && scope?.serial===evidence.serial && scope.profile===evidence.profile);
     const original=(await db.query('SELECT status,ended_at FROM task_runs WHERE id=$1 AND task_id=$2 AND run_id=$3 FOR UPDATE',
@@ -190,14 +199,18 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
         && digest(run.result?.standalone_start_review ?? null) === digest(previous));
       return response(true);
     }
-    const navigationFrame = cleanup?.videoProof?.navigationFrame;
+    const navigationFrame = cleanup?.videoProof?.navigationFrame ?? released?.navigationFrame;
     if (navigationFrame) {
       const prior = task.result.standalone_navigation_review_evidence;
       check(prior?.protocol==='standalone-navigation-review-evidence/v1' && prior.recorded_by===principal && prior.run_id===runId && prior.task_run_id===run.id
         && prior.serial===scope.serial && prior.profile===scope.profile && prior.frame_evidence_id===navigationFrame.id
         && Array.isArray(prior.screen) && prior.screen.length===2
         && prior.screen.every((value,index)=>value===navigationFrame.screen[index])
-        && prior.ledger_sha256===cleanup.videoProof.ledgerSha256 && typeof prior.frame_sha256==='string' && hash.test(prior.frame_sha256),
+        && prior.ledger_sha256===(cleanup?.videoProof?.ledgerSha256 ?? released?.ledgerSha256)
+        && typeof prior.frame_sha256==='string' && hash.test(prior.frame_sha256)
+        && (released?.cleanupRoute ? prior.frame_sha256===released.accountNavigationSha256
+          && prior.cleanup_route?.adb_endpoint===released.cleanupRoute.adb_endpoint
+          && prior.cleanup_route?.adb_serial===released.cleanupRoute.adb_serial : prior.cleanup_route===undefined),
       'standalone_start_review_navigation_evidence_conflict');
     }
     check(task.status === 'blocked' && task.blocked_reason === 'needs_review' && task.claimed_by === claim.claimer
@@ -217,7 +230,8 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && run.workflow_id === binding.workflow_id && original.workflow?.source_commit === host.source_commit
       && ['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256'].every(key=>binding[key]===definition?.[key])
       && binding.workflow_id === ref.workflow_id && binding.workflow_definition_version_id === ref.workflow_definition_version_id);
-    if (cleanup?.videoProof) await verifyCollectionReviewVideoOrigin(db, scope, cleanup.videoProof.videoId);
+    const reviewedVideoId = cleanup?.videoProof?.videoId ?? released?.videoId;
+    if (reviewedVideoId) await verifyCollectionReviewVideoOrigin(db, scope, reviewedVideoId);
     const serial = scope.serial;
     check(typeof serial === 'string' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(serial));
     const locks = (await db.query('SELECT device_name,locked_by,xmin::text AS lease_version FROM device_locks WHERE device_name=$1 OR locked_by IN ($2,$3) FOR UPDATE',[serial,task.id,runId])).rows;
@@ -257,6 +271,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       ...(cleanup?.accountReadProof ? { collection_account_read_timeout_sha256:cleanup.accountReadProof.sha256 } : {}),
       ...(collectionAccountFallback ? { collection_account_fallback_cleanup_sha256:cleanup.ledgerSha256 } : {}),
       ...(cleanup?.videoProof ? { collection_review_video_timeout_sha256:cleanup.videoProof.sha256 } : {}),
+      ...(released?.accountNavigationSha256 ? { released_candidate_account_navigation_sha256:released.accountNavigationSha256 } : {}),
       ...(navigationFrame ? { navigation_review_frame_sha256:task.result.standalone_navigation_review_evidence.frame_sha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
