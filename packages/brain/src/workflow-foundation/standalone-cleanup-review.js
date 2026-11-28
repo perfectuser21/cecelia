@@ -441,6 +441,8 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
     terminal_ack_ledger: ledger, account_profile: accountProfile, account_snapshot_id: snapshotId, candidate_review: candidate } = artifact;
   const accountFallback = accountProfile !== undefined;
   const candidateMode = candidate !== undefined;
+  const linkVisualFallback = candidate?.link_visual_fallback === true;
+  const maxCandidateLedgerBytes = linkVisualFallback ? 98_304 : 65_536;
   invalid(!candidateMode || !accountFallback && snapshotId===undefined);
   invalid(!accountFallback || typeof accountProfile === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(accountProfile));
   const snapshotPrefix = host.run_id + '-';
@@ -449,7 +451,7 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
   invalid(review.admission_code === 'CLEANUP_VERIFIED_NO_BUSINESS' && review.hardware_diagnostic === undefined
-    && typeof raw === 'string' && Buffer.byteLength(raw) <= (candidateMode ? 32_768 : accountFallback ? 24576 : 12288) && sha(raw) === sha256
+    && typeof raw === 'string' && Buffer.byteLength(raw) <= (linkVisualFallback ? 49_152 : candidateMode ? 32_768 : accountFallback ? 24_576 : 12_288) && sha(raw) === sha256
     && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
     && typeof leaseVersion === 'string' && /^[0-9]{1,12}$/.test(leaseVersion));
 
@@ -465,11 +467,11 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
     && original.execution_mode === 'codex-direct' && original.native_return_unknown === false
     && original.quarantine_verified === false && original.local_released === true && original.central_released === true
     && foreground && androidComponent(foreground[2]).package === foreground[1]
-    && seal.complete === !accountFallback && seal.empty_complete === false && seal.requests_returned === true
+    && seal.complete === (!accountFallback && !linkVisualFallback) && seal.empty_complete === false && seal.requests_returned === true
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves) && seal.leaves.length <= (candidateMode ? 85 : accountFallback ? 64 : 32));
+    && Array.isArray(seal.leaves) && seal.leaves.length <= (linkVisualFallback ? 110 : candidateMode ? 85 : accountFallback ? 64 : 32));
   const target = ['-H','127.0.0.1','-P',socket[1],'-s',serial], version = ['version'];
   const state = [...target,'get-state'], foregroundProbe = [...target,'shell','dumpsys','window','displays'];
   const cleanup = [version,version,state,version,
@@ -477,12 +479,16 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
     version,[...target,'shell','input','keyevent','3'],version,foregroundProbe];
   invalid(seal.leaves.length >= cleanup.length);
   if (candidateMode) {
-    onlyKeys(candidate,['profile','video_id','open_evidence_id','account_navigation']);
+    onlyKeys(candidate,['profile','video_id','open_evidence_id','account_navigation','link_visual_fallback']);
+    invalid(candidate.link_visual_fallback === undefined || linkVisualFallback);
     const { evidenceId,screen,x,y } = accountNavigationEvidence(candidate.account_navigation,host);
     const commands = collectionReviewVideoCommands({profile:candidate.profile,video_id:candidate.video_id,account_evidence_id:evidenceId,
-      cleanAccount:{openEvidenceId:candidate.open_evidence_id,x,y}},host.run_id,target);
-    verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt));
-    const ledgerSha256 = verifyLeafLedger(unpackNavigationLedger(ledger,65_536),seal.leaves,[...commands,...cleanup],false,65_536);
+      cleanAccount:{openEvidenceId:candidate.open_evidence_id,x,y,linkVisualFallback}},host.run_id,target);
+    // The absent UI scratch file is the only permissible nonzero exit in this trajectory.
+    const missingUiStats = linkVisualFallback ? [commands.findLastIndex(argv => argv.at(-4) === 'stat')] : [];
+    verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt), null, missingUiStats);
+    const ledgerSha256 = verifyLeafLedger(unpackNavigationLedger(ledger,maxCandidateLedgerBytes),seal.leaves,
+      [...commands,...cleanup],false,maxCandidateLedgerBytes);
     return {sha256,ledgerSha256,firstIntentAt:seal.leaves[0].intent_at,leaseVersion,
       accountProfile:candidate.profile,videoId:candidate.video_id,accountNavigationSha256:candidate.account_navigation.hierarchy.sha256,
       navigationFrame:{id:evidenceId,screen},cleanupRoute:{adb_endpoint:endpoint,adb_serial:serial}};

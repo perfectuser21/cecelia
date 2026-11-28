@@ -417,7 +417,7 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
 });
 
 
-it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snapshot', 'candidate-open'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
+it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snapshot', 'candidate-open', 'candidate-visual-fallback'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
   const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
   const next = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -435,7 +435,8 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   const probe=[version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
     telephony,version,[...target,'shell','dumpsys','window','displays'],version,telephony];
   const snapshotMode = mode === 'account-snapshot';
-  const candidateMode = mode === 'candidate-open';
+  const candidateVisualFallback = mode === 'candidate-visual-fallback';
+  const candidateMode = mode === 'candidate-open' || candidateVisualFallback;
   const accountMode = mode === 'account-no-xml' || snapshotMode;
   const profile = (await f.state()).payload.scope.profile;
   const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
@@ -463,16 +464,23 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
     ...identification,shell('am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+videoId),
     version,foreground,version,foreground,version,shell('input','keyevent','127'),version,foreground,version,...uiCapture,
     [...target,'pull',xml,evidence+openId+'-openvideo-w1.xml'],version,foreground,version,[...target,'exec-out','screencap','-p'],version,foreground];
+  const missingVisualTree = shell('stat','-c','%s',xml);
+  // 真实 102 的取链仅暂停播放、检查新 UI 树并截图，无分享或剪贴板操作。
+  const candidateVisual = [
+    ...candidate,...identification,foreground,version,shell('input','keyevent','127'),version,
+    foreground,version,...uiCapture.slice(0,4),missingVisualTree,version,account.at(-1),
+    version,foreground,version,[...target,'exec-out','screencap','-p'],version,foreground,
+  ];
   const prelude={cleanup:[],launch:open,probes:[...probe,...probe],mixed:[...probe,...open,version],
     'account-no-xml':[...probe,...open,...account],
-    'account-snapshot':[...probe,...open,...account,...snapshot], 'candidate-open':candidate}[mode];
+    'account-snapshot':[...probe,...open,...account,...snapshot], 'candidate-open':candidate,'candidate-visual-fallback':candidateVisual}[mode];
   const commands = [...prelude,...cleanup];
   const sha = value => createHash('sha256').update(value).digest('hex');
   const boundary = 'darwin-sandbox-deny-process-fork-v1';
   const [device] = (await fixture.pool.query('SELECT xmin::text AS version FROM device_locks WHERE device_name=$1',[serial])).rows;
   const proofFor = argv => {
     const leaves = argv.map((cmd,index)=>({sequence:index+1,argv_sha256:sha(JSON.stringify(cmd)),intent_at:began,boundary,
-      pid:index+10,started_at:began,ended_at:began,code:accountMode&&cmd===uiStat?1:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
+      pid:index+10,started_at:began,ended_at:began,code:(accountMode&&cmd===uiStat)||(candidateVisualFallback&&cmd===missingVisualTree)?1:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
     const ledger = leaves.flatMap(leaf=>{
       const {sequence,argv_sha256,intent_at,pid,started_at}=leaf;
       const intent={sequence,argv_sha256,intent_at,boundary};
@@ -481,12 +489,13 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
     const raw = JSON.stringify({task_id:f.task.id,run_id:f.job.run_id,execution_mode:'codex-direct',
       native_return_unknown:false,quarantine_verified:false,local_released:true,central_released:true,
       desktop:'launcher=com.android.launcher3\nforeground_package=com.android.launcher3\nforeground=  mCurrentFocus=Window{aa u0 com.android.launcher3/.Launcher}\n',
-      leaves:{complete:!accountMode,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
+      leaves:{complete:!accountMode&&!candidateVisualFallback,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
         ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
     return {raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
       ...(accountMode?{account_profile:profile}:{}),
       ...(snapshotMode?{account_snapshot_id:snapshotId}:{}),
       ...(candidateMode?{candidate_review:{profile,video_id:videoId,open_evidence_id:openId,
+        ...(candidateVisualFallback?{link_visual_fallback:true}:{}),
         account_navigation:{evidence_id:accountId,hierarchy:{raw:hierarchy,sha256:sha(hierarchy)}}}}:{}),
       terminal_ack_ledger:candidateMode ? {gzip_base64:gzipSync(ledger).toString('base64'),sha256:sha(ledger)}
         : {raw:ledger,sha256:sha(ledger)}};
@@ -539,7 +548,7 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect(await f.state()).toMatchObject({status:'blocked'});
   expect(await f.run()).toMatchObject({status:'running'});
   if(candidateMode){
-    expect(commands).toHaveLength(85);
+    expect(commands).toHaveLength(candidateVisualFallback ? 110 : 85);
     expect((await f.reconcile(body)).body).toMatchObject({error:'standalone_start_review_navigation_evidence_conflict'});
     const evidence = {
       protocol:'standalone-navigation-review-evidence/v1',run_id:f.job.run_id,task_run_id:body.review.host_proof.task_run_id,
