@@ -2,7 +2,7 @@ import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 
 export const collectionReviewVideo = 'standalone-collection-review-video-timeout/v1';
 
-export function collectionReviewVideoCommands({profile,account_evidence_id:accountId,video_id:videoId,account_recovery:recovery}, runId, target) {
+export function collectionReviewVideoCommands({profile,account_evidence_id:accountId,video_id:videoId,account_recovery:recovery,link_after_open:linkAfterOpen}, runId, target) {
   requireFoundation(typeof profile==='string' && /^[A-Za-z0-9_-]{1,80}$/.test(profile)
     && typeof accountId==='string' && accountId.startsWith(runId+'-') && /^[A-Za-z0-9_-]{1,120}$/.test(accountId)
     && typeof videoId==='string' && /^[0-9]{16,24}$/.test(videoId), 'standalone_start_review_invalid', 400);
@@ -38,14 +38,27 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
   const absent = shell(`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`);
   const image = '/sdcard/douyin-leadgen-shot-'+profile+'.png';
   const photo = id => [shell('screencap','-p',image),version,[...target,'pull',image,proofDirectory+id+'.png']];
-  return [
+  const recoveredAccount = [
     ...begin,...account,absent,
     ...fastRoute,...photo(snapshotId),
     ...fastRoute,window,version,shell('input','keyevent','4'),version,window,version,...photo(backId),
     ...fastRoute,window,version,shell('input','tap',...tap.map(String)),
     ...account,pullAccount,
-    ...detail,version,absent,version,shell('input','keyevent','85'),version,...capture.slice(0,3),
   ];
+  const toggle = shell('input','keyevent','85');
+  if (linkAfterOpen) {
+    const opened = [
+      ...route,open,version,window,version,window,version,pause,version,window,version,...capture,version,
+      [...target,'pull',xml,proofDirectory+openEvidenceId+'-openvideo-w1.xml'],
+      version,window,version,[...target,'exec-out','screencap','-p'],version,window,
+    ];
+    const guard = [
+      ...route,window,version,pause,version,
+      ...capture,version,...capture,version,...capture,version,toggle,version,
+    ];
+    return [...recoveredAccount,...opened,...guard];
+  }
+  return [...recoveredAccount,...detail,version,absent,version,toggle,version,...capture.slice(0,3)];
 }
 
 export async function verifyCollectionReviewVideoOrigin(db, scope, videoId) {

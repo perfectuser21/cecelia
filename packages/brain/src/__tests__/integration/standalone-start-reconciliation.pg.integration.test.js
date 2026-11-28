@@ -525,15 +525,29 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
 
-it.each([false,true])('102 候选只读打开超时且已归位时结算原运行并安全释放租约，曾恢复账号=%s', async recoveredAccount => {
-  const f = prepareCollectionReviewVideoTimeout(await desktopCleanupReview(true,'102'),recoveredAccount);
+it.each([[false,false],[true,false],[true,true]])(
+  '102 候选打开或取链守卫超时且已归位时结算原运行，曾恢复账号=%s，成功打开后的取链=%s',
+  async (recoveredAccount, linkAfterOpen) => {
+  const f = prepareCollectionReviewVideoTimeout(await desktopCleanupReview(true,'102'),recoveredAccount,linkAfterOpen);
+  if (linkAfterOpen) {
+    expect(f.cleanup.leaves.leaves).toHaveLength(140);
+    const wrongStage = structuredClone(f.body);
+    delete wrongStage.review.cleanup_diagnostic.collection_review_video.link_after_open;
+    expect((await f.reconcile(wrongStage)).status).toBe(400);
+    const wrongLeaf = structuredClone(f.body);
+    const d = wrongLeaf.review.cleanup_diagnostic;
+    const raw = JSON.parse(d.raw);
+    raw.leaves.leaves[138].argv_sha256 = '0'.repeat(64);
+    Object.assign(d,f.seal(JSON.stringify(raw)));
+    expect((await f.reconcile(wrongLeaf)).status).toBe(400);
+  }
   if (recoveredAccount) {
     const badNavigation = structuredClone(f.body);
     badNavigation.review.cleanup_diagnostic.collection_review_video.account_recovery.tap = [1,1];
     expect((await f.reconcile(badNavigation)).status).toBe(400);
     const tooLarge = structuredClone(f.body);
     tooLarge.review.cleanup_diagnostic.collection_review_video.leaf_ledger.gzip_base64 =
-      gzipSync(Buffer.alloc(100_000)).toString('base64');
+      gzipSync(Buffer.alloc(linkAfterOpen ? 120_000 : 100_000)).toString('base64');
     expect((await f.reconcile(tooLarge)).status).toBe(400);
     expect((await f.state()).status).toBe('blocked');
   }
