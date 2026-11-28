@@ -15,6 +15,7 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
   const fastRoute = [version,version,state,version];
   const route = [...fastRoute,shell('getprop','ro.product.model'),version];
   const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
+  const noFreshXml = shell(`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`);
   const capture = [shell('rm','-f',xml),version,shell('uiautomator','dump','--compressed',xml),version,shell('stat','-c','%s',xml)];
   const proofDirectory = '/private/tmp/openclaw-phone/evidence/'+profile+'/';
   const pullAccount = [...target,'pull',xml,proofDirectory+accountId+'-before.xml'];
@@ -29,13 +30,17 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
     version,window,version,[...target,'exec-out','screencap','-p'],version,window,
   ];
   if (cleanAccount) {
-    const {openEvidenceId,x,y} = cleanAccount;
+    const {openEvidenceId,x,y,linkVisualFallback} = cleanAccount;
     requireFoundation(recovery===undefined && !linkAfterOpen && typeof openEvidenceId==='string'
       && openEvidenceId!==accountId && openEvidenceId.startsWith(runId+'-')
       && /^[A-Za-z0-9_-]{1,120}$/.test(openEvidenceId), 'standalone_start_review_invalid', 400);
     const profileRead = [...target,'pull',xml,proofDirectory+accountId+'-profile.xml'];
-    return [...begin,...account,pullAccount,version,shell('input','tap',x,y),version,...capture,version,profileRead,
+    const opened = [...begin,...account,pullAccount,version,shell('input','tap',x,y),version,...capture,version,profileRead,
       ...managedOpen(openEvidenceId)];
+    if (!linkVisualFallback) return opened;
+    // The guarded link attempt stopped before the first share interaction.
+    return [...opened,...route,window,version,pause,version,window,version,
+      ...capture,version,noFreshXml,version,window,version,[...target,'exec-out','screencap','-p'],version,window];
   }
   if (recovery === undefined) return [...begin,...account,pullAccount,...detail];
 
@@ -49,7 +54,7 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
     && pair(screen) && pair(tap) && tap[0]*100>=screen[0]*84 && tap[0]*100<=screen[0]*98
     && tap[1]*100>=screen[1]*88 && tap[1]*100<=screen[1]*95, 'standalone_start_review_invalid', 400);
 
-  const absent = shell(`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`);
+  const absent = noFreshXml;
   const image = '/sdcard/douyin-leadgen-shot-'+profile+'.png';
   const photo = id => [shell('screencap','-p',image),version,[...target,'pull',image,proofDirectory+id+'.png']];
   const recoveredAccount = [
