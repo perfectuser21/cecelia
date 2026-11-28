@@ -124,10 +124,116 @@ function verifyCollectionOpenAppTimeout(proof, review, host, target, leaves, ter
   return {sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,terminalAckMissing),profile};
 }
 
+function validXmlCodePoint(unit) {
+  return unit === 9 || unit === 10 || unit === 13 || (unit >= 0x20 && unit <= 0xd7ff)
+    || (unit >= 0xe000 && unit <= 0xfffd) || (unit >= 0x10000 && unit <= 0x10ffff);
+}
+
+// UI Automator produces a hierarchy of nested node elements. Reject all other XML constructs.
+function androidHierarchyNodes(xml) {
+  const document = /^<\?xml version=(['"])1\.0\1 encoding=(['"])UTF-8\2 standalone=(['"])yes\3\s*\?><hierarchy rotation="[0-3]">([\s\S]*)<\/hierarchy>$/.exec(xml);
+  invalid(document);
+  for (const character of xml) invalid(validXmlCodePoint(character.codePointAt(0)));
+  const content = document[4];
+  const nodes = [];
+  let depth = 0;
+  let offset = 0;
+  for (const tag of content.matchAll(/<node(\s[^<>]*?)(\/?)>|<\/node>/g)) {
+    invalid(!content.slice(offset,tag.index).trim());
+    offset=tag.index+tag[0].length;
+    if (tag[0]==='</node>') {
+      invalid(depth>0);
+      depth--;
+      continue;
+    }
+    invalid(depth>0 || nodes.length===0);
+    const attributes = new Map();
+    let end = 0;
+    for (const attribute of tag[1].matchAll(/\s+([A-Za-z_][\w.-]*)="([^"<>]*)"/g)) {
+      const [,name,value]=attribute;
+      invalid(attribute.index===end && !attributes.has(name)
+        && !/&(?!amp;|lt;|gt;|quot;|apos;|#[0-9]+;|#x[0-9a-fA-F]+;)/.test(value));
+      for (const [,decimal,hex] of value.matchAll(/&#(?:([0-9]+)|x([0-9a-fA-F]+));/g)) {
+        const unit = decimal===undefined ? Number.parseInt(hex,16) : Number(decimal);
+        invalid(validXmlCodePoint(unit));
+      }
+      end=attribute.index+attribute[0].length;
+      attributes.set(name,value);
+    }
+    invalid(attributes.size>0 && !tag[1].slice(end).trim());
+    nodes.push(attributes);
+    if (!tag[2]) depth++;
+  }
+  invalid(nodes.length>0 && depth===0 && !content.slice(offset).trim());
+  return nodes;
+}
+
+function accountNavigationEvidence(navigation, host) {
+  onlyKeys(navigation,['evidence_id','hierarchy']);
+  const {evidence_id: evidenceId,hierarchy} = navigation;
+  invalid(typeof evidenceId==='string' && evidenceId.startsWith(host.run_id+'-')
+    && /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(evidenceId));
+  onlyKeys(hierarchy,['raw','sha256']);
+  const xml = hierarchy.raw;
+  invalid(typeof xml==='string' && Buffer.byteLength(xml)<=36_000 && sha(xml)===hierarchy.sha256);
+  const nodes = androidHierarchyNodes(xml);
+  const hasAccountId = nodes.some(node=>Array.from(node.values()).some(value=>value.includes('抖音号：')));
+  invalid(!hasAccountId || !nodes.some(node=>node.get('content-desc')==='私信'
+    || node.get('text')==='编辑主页' || node.get('content-desc')?.startsWith('切换账号')));
+  const me = nodes.filter(node=>node.get('content-desc')==='我，按钮');
+  invalid(me.length===1 && me[0].get('package')==='com.ss.android.ugc.aweme' && me[0].get('enabled')==='true');
+  const screen = /^\[0,0\]\[([1-9]\d{0,3}),([1-9]\d{0,3})\]$/.exec(nodes[0].get('bounds')??'');
+  const bounds = /^\[(\d{1,4}),(\d{1,4})\]\[(\d{1,4}),(\d{1,4})\]$/.exec(me[0].get('bounds')??'');
+  invalid(screen && bounds);
+  const [x1,y1,x2,y2] = bounds.slice(1).map(Number);
+  invalid(x2>x1 && y2>y1 && x2<=Number(screen[1]) && y2<=Number(screen[2]));
+  return {evidenceId, bytes:Buffer.byteLength(xml), x:String(Math.floor((x1+x2)/2)), y:String(Math.floor((y1+y2)/2))};
+}
+
+function verifyAccountNavigationTimeout({proof,review,host,target,leaves,profile}) {
+  const navigation = accountNavigationEvidence(proof.account_navigation,host);
+  const records = readJsonl(proof,4096);
+  invalid(records.length===1);
+  const {stdout,stderr} = controllerFailure(records[0],124);
+  const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
+  const [pulled,...terminal] = stderr.split('\n');
+  const pulledReceipt = /^: 1 file pulled, 0 skipped\. [0-9.]+ [KMG]?B\/s \(([1-9][0-9]*) bytes in [0-9.]+s\)$/.exec(pulled.slice(xml.length));
+  invalid(stdout==='' && pulled.startsWith(xml) && Number(pulledReceipt?.[1])===navigation.bytes
+    && isDeepStrictEqual(terminal,[
+      'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN',
+      'lock=preserved owner='+host.run_id,
+      'guarded command timeout: whole command and children terminated; owner lock retained','',
+    ]));
+  verifyControllerRevocation(records,[],review);
+
+  const version=['version'], state=[...target,'get-state'];
+  const model=[...target,'shell','getprop','ro.product.model'];
+  const focus=[...target,'shell','dumpsys','window','displays'];
+  const call=[...target,'shell','dumpsys','telephony.registry'];
+  const launch=[...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'];
+  const remove=[...target,'shell','rm','-f',xml];
+  const dump=[...target,'shell','uiautomator','dump','--compressed',xml];
+  const stat=[...target,'shell','stat','-c','%s',xml];
+  const local='/private/tmp/openclaw-phone/evidence/'+profile+'/'+navigation.evidenceId+'-before.xml';
+  const pull=[...target,'pull',xml,local];
+  const tap=[...target,'shell','input','tap',navigation.x,navigation.y];
+
+  // Only the captured Me control may have been tapped. The second hierarchy never returned.
+  const commands=[
+    version,version,state,version,model,version,call,version,focus,version,call,
+    version,version,state,version,model,version,launch,version,focus,
+    version,version,state,version,model,version,focus,version,focus,version,
+    remove,version,dump,version,stat,version,pull,
+    version,tap,version,remove,version,dump,version,stat,
+  ];
+  return {sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,true,49_152),profile};
+}
+
 function verifyCollectionAccountReadTimeout(proof, review, host, target, leaves) {
-  onlyKeys(proof,['raw','sha256','leaf_ledger','ui_profile']);
+  onlyKeys(proof,['raw','sha256','leaf_ledger','ui_profile','account_navigation']);
   const profile=proof.ui_profile;
   invalid(typeof profile==='string' && /^[A-Za-z0-9_-]{1,80}$/.test(profile));
+  if (proof.account_navigation!==undefined) return verifyAccountNavigationTimeout({proof,review,host,target,leaves,profile});
   const records=readJsonl(proof,4096);
   invalid(records.length===3);
   const [business,failed]=records;
@@ -180,6 +286,7 @@ export function verifyDesktopCleanupProof(review, host) {
     terminal_ack_ledger:ledger,preflight_timeout:controller,account_foreground_refusal:account,open_app_timeout:openApp,account_read_timeout:accountRead } = artifact;
   const collectionOpenApp = review.protocol === collectionOpenAppReview;
   const collectionAccountRead=review.protocol === collectionAccountReadReview;
+  const accountNavigation=collectionAccountRead && accountRead?.account_navigation!==undefined;
   const collection=collectionOpenApp||collectionAccountRead;
   invalid(collectionOpenApp ? openApp !== undefined : openApp === undefined);
   invalid(collectionAccountRead ? accountRead !== undefined : accountRead === undefined);
@@ -193,7 +300,7 @@ export function verifyDesktopCleanupProof(review, host) {
     : controller===undefined && (!accountRefused || ledger===undefined));
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
-  invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= (collectionAccountRead ? 12288 : 8192) && sha(raw) === sha256
+  invalid(typeof raw === 'string' && Buffer.byteLength(raw) <= (accountNavigation ? 20_480 : collectionAccountRead ? 12288 : 8192) && sha(raw) === sha256
     && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
     && typeof version === 'string' && /^[0-9]{1,12}$/.test(version));
   onlyKeys(desktop,['serial','default_home','focused_activity','observed_at']);
@@ -222,12 +329,12 @@ export function verifyDesktopCleanupProof(review, host) {
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(host.run_directory + '/standalone-leaves/')
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.split('/').at(-1))
-    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
+    && Array.isArray(seal.leaves) && seal.leaves.length > 0 && seal.leaves.length <= (accountNavigation ? 45 : collectionAccountRead ? 30 : accountRefused ? 16 : collectionOpenApp ? (collectionPostReturn ? 21 : 12) : 10));
 
   const target=['-H','127.0.0.1','-P',socket[1],'-s',serial];
   const args = [['version'],[...target,'get-state']];
   const readOnly = new Set(args.map(value=>sha(JSON.stringify(value))));
-  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionAccountRead ? [23,29] : collectionPostReturn ? [16] : []);
+  verifyReturnedLeaves(seal.leaves, Date.parse(review.revocation.observed_at), allReturned && !accountRefused && !collection ? readOnly : null, collectionAccountRead && !accountNavigation ? [23,29] : collectionPostReturn ? [16] : []);
   const versionProbe=['version'];
   const model=[...target,'shell','getprop','ro.product.model'],call=[...target,'shell','dumpsys','telephony.registry'];
   const foregroundProbe=[...target,'shell','dumpsys','window','displays'];
