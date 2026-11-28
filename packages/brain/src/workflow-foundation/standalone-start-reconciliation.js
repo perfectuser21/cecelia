@@ -7,6 +7,7 @@ import { validateMachineRequest } from './claim.js';
 import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
 import { collectionOpenAppReview, collectionAccountReadReview, desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
+import { collectionAccountFallbackReview } from './standalone-account-fallback-review.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
@@ -68,7 +69,8 @@ function verifyRequest(runId, input) {
   onlyKeys(review, ['protocol','observed_at','evidence_sha256','admission_code','host_process_exited','native_operations',
     'business_effects','local_lock','host_proof','revocation','hardware_diagnostic','cleanup_diagnostic']);
   const collectionOpenAppTimeout = [collectionOpenAppReview,collectionAccountReadReview].includes(review.protocol);
-  const desktopCleanup = collectionOpenAppTimeout || review.protocol === 'standalone-pre-native-cleanup-review/v1';
+  const collectionAccountFallback = review.protocol === collectionAccountFallbackReview;
+  const desktopCleanup = collectionAccountFallback || collectionOpenAppTimeout || review.protocol === 'standalone-pre-native-cleanup-review/v1';
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
   onlyKeys(host.process_identity, ['pid','pgid','ppid','uid','start_identity']);
@@ -95,7 +97,7 @@ function verifyRequest(runId, input) {
     && revocation.protocol === 'standalone-skill-host-revocation/v1' && proofIdentity.every(key=>host[key]===revocation[key])
     && revocation.reason === (desktopCleanup ? review.admission_code : 'ADMISSION_REJECTED')
     && revocation.pid === host.process_identity.pid);
-  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host), collectionOpenAppTimeout };
+  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host), collectionOpenAppTimeout, collectionAccountFallback };
   invalid(review.cleanup_diagnostic === undefined);
   return { failureReason: startFailure, hardwareTimeout: verifyHardwareTimeout(review,input.task_id) };
 }
@@ -103,9 +105,9 @@ function verifyRequest(runId, input) {
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
-  const { failureReason, hardwareTimeout, cleanup, released, collectionOpenAppTimeout } = verifyRequest(runId,input);
+  const { failureReason, hardwareTimeout, cleanup, released, collectionOpenAppTimeout, collectionAccountFallback } = verifyRequest(runId,input);
   const requestSha = digest(input), review = input.review, host = review.host_proof;
-  const collection = Boolean(released || collectionOpenAppTimeout);
+  const collection = Boolean(released || collectionOpenAppTimeout || collectionAccountFallback);
   const expectedSource = collection ? 'notion_leadgen_102' : 'notion_leadgen_101';
   const expectedWorkflow = collection ? 'douyin_video_processing' : 'douyin_video_discovery';
   return foundationTransaction(pool, 'notion-standalone:'+input.machine_id, async db => {
@@ -125,7 +127,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
-    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile ?? released?.accountProfile;
+    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile ?? cleanup?.fallbackProfile ?? released?.accountProfile;
     if(collectionProfile!==undefined)check(collectionProfile===scope.profile);
     const preflight = cleanup?.preflightProof, account = cleanup?.accountProof;
     const snapshot = (preflight ?? account)?.snapshot;
@@ -202,6 +204,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       ...(account ? { account_foreground_refusal_sha256:account.sha256 } : {}),
       ...(cleanup?.openAppProof ? { collection_open_app_timeout_sha256:cleanup.openAppProof.sha256 } : {}),
       ...(cleanup?.accountReadProof ? { collection_account_read_timeout_sha256:cleanup.accountReadProof.sha256 } : {}),
+      ...(collectionAccountFallback ? { collection_account_fallback_cleanup_sha256:cleanup.ledgerSha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
         central_release_performed:releaseCentral } : {}) };
@@ -209,7 +212,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       {pool:db,strict:true,emit:async()=>{}});
     check(finished.updated,'standalone_start_review_write_unconfirmed');
     const closed = await finalizeTask(db,task.id,'failed',{relay:false,onlyIfStatus:'blocked',set:{completed_at:'now'},
-      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason,collectionOpenAppTimeout}});
+      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason,collectionOpenAppTimeout,collectionAccountFallback}});
     check(closed.rowCount === 1,'standalone_start_review_write_unconfirmed');
     return response(false);
   });

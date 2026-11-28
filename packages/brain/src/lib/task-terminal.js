@@ -212,9 +212,10 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   const standaloneStartFailure=opts.standaloneStartFailureReconciliation;
   if(standaloneStartFailure!==undefined){
     const receiptReason=standaloneStartFailure.receiptReason??'standalone_start_unconfirmed';
-    const collectionOpenApp = standaloneStartFailure.collectionOpenAppTimeout === true;
-    if(collectionOpenApp && receiptReason!=='standalone_cleanup_unconfirmed')throw Error('standalone_terminal_proof_invalid');
-    const reviewSource = collectionOpenApp || receiptReason==='standalone_business_unconfirmed' ? 'notion_leadgen_102' : 'notion_leadgen_101';
+    const collectionCleanup = standaloneStartFailure.collectionOpenAppTimeout === true
+      || standaloneStartFailure.collectionAccountFallback === true;
+    if(collectionCleanup && receiptReason!=='standalone_cleanup_unconfirmed')throw Error('standalone_terminal_proof_invalid');
+    const reviewSource = collectionCleanup || receiptReason==='standalone_business_unconfirmed' ? 'notion_leadgen_102' : 'notion_leadgen_101';
     if(!['standalone_start_unconfirmed','standalone_cleanup_unconfirmed','standalone_business_unconfirmed'].includes(receiptReason))throw Error('standalone_terminal_proof_invalid');
     if(foundation!==undefined||standalone!==undefined||taskId==null||status!=='failed'
       ||!/^[a-f0-9-]{36}$/.test(standaloneStartFailure.runId??'')||!/^[a-f0-9]{64}$/.test(standaloneStartFailure.requestSha??''))throw Error('standalone_terminal_proof_invalid');
