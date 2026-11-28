@@ -8,6 +8,7 @@ import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 import { foundationTransaction } from './registry.js';
 import { collectionOpenAppReview, collectionAccountReadReview, desktopCleanupFailure, verifyDesktopCleanupProof, verifyReleasedCleanupProof } from './standalone-cleanup-review.js';
 import { collectionAccountFallbackReview } from './standalone-account-fallback-review.js';
+import { collectionReviewVideo, verifyCollectionReviewVideoOrigin } from './standalone-review-video-evidence.js';
 
 const hash = /^[a-f0-9]{64}$/;
 const commit = /^[a-f0-9]{40}$/;
@@ -70,7 +71,8 @@ function verifyRequest(runId, input) {
     'business_effects','local_lock','host_proof','revocation','hardware_diagnostic','cleanup_diagnostic']);
   const collectionOpenAppTimeout = [collectionOpenAppReview,collectionAccountReadReview].includes(review.protocol);
   const collectionAccountFallback = review.protocol === collectionAccountFallbackReview;
-  const desktopCleanup = collectionAccountFallback || collectionOpenAppTimeout || review.protocol === 'standalone-pre-native-cleanup-review/v1';
+  const collectionReviewVideoTimeout = review.protocol === collectionReviewVideo;
+  const desktopCleanup = collectionReviewVideoTimeout || collectionAccountFallback || collectionOpenAppTimeout || review.protocol === 'standalone-pre-native-cleanup-review/v1';
   const host = review.host_proof, revocation = review.revocation;
   onlyKeys(host, ['protocol',...proofIdentity,'run_directory','process_identity']);
   onlyKeys(host.process_identity, ['pid','pgid','ppid','uid','start_identity']);
@@ -97,7 +99,7 @@ function verifyRequest(runId, input) {
     && revocation.protocol === 'standalone-skill-host-revocation/v1' && proofIdentity.every(key=>host[key]===revocation[key])
     && revocation.reason === (desktopCleanup ? review.admission_code : 'ADMISSION_REJECTED')
     && revocation.pid === host.process_identity.pid);
-  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host), collectionOpenAppTimeout, collectionAccountFallback };
+  if (desktopCleanup) return { failureReason: desktopCleanupFailure, cleanup: verifyDesktopCleanupProof(review,host), collectionOpenAppTimeout, collectionAccountFallback, collectionReviewVideoTimeout };
   invalid(review.cleanup_diagnostic === undefined);
   return { failureReason: startFailure, hardwareTimeout: verifyHardwareTimeout(review,input.task_id) };
 }
@@ -105,9 +107,9 @@ function verifyRequest(runId, input) {
 /** Central checks use persistent authority only. Host exit, local fence and effect reads are the authorized operator's observation. */
 export async function reconcileStandaloneStartFailure(pool, runId, input, { principal, now = Date.now } = {}) {
   requireFoundation(principal === 'authenticated-operator', 'standalone_start_review_auth_required', 401);
-  const { failureReason, hardwareTimeout, cleanup, released, collectionOpenAppTimeout, collectionAccountFallback } = verifyRequest(runId,input);
+  const { failureReason, hardwareTimeout, cleanup, released, collectionOpenAppTimeout, collectionAccountFallback, collectionReviewVideoTimeout } = verifyRequest(runId,input);
   const requestSha = digest(input), review = input.review, host = review.host_proof;
-  const collection = Boolean(released || collectionOpenAppTimeout || collectionAccountFallback);
+  const collection = Boolean(released || collectionOpenAppTimeout || collectionAccountFallback || collectionReviewVideoTimeout);
   const expectedSource = collection ? 'notion_leadgen_102' : 'notion_leadgen_101';
   const expectedWorkflow = collection ? 'douyin_video_processing' : 'douyin_video_discovery';
   return foundationTransaction(pool, 'notion-standalone:'+input.machine_id, async db => {
@@ -127,7 +129,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && scope.source_commit === host.source_commit && scope.company?.tenant_id === task.tenant_id
       && attestation.scope_sha256 === digest({...scope,task_id:task.id})
       && task.blocked_at?.toISOString() === input.blocked_at);
-    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile ?? cleanup?.fallbackProfile ?? released?.accountProfile;
+    const collectionProfile=(cleanup?.openAppProof??cleanup?.accountReadProof)?.profile ?? cleanup?.videoProof?.profile ?? cleanup?.fallbackProfile ?? released?.accountProfile;
     if(collectionProfile!==undefined)check(collectionProfile===scope.profile);
     const preflight = cleanup?.preflightProof, account = cleanup?.accountProof;
     const snapshot = (preflight ?? account)?.snapshot;
@@ -167,6 +169,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       && run.workflow_id === binding.workflow_id && original.workflow?.source_commit === host.source_commit
       && ['release_id','observation_id','workflow_id','workflow_definition_version_id','snapshot_sha256'].every(key=>binding[key]===definition?.[key])
       && binding.workflow_id === ref.workflow_id && binding.workflow_definition_version_id === ref.workflow_definition_version_id);
+    if (cleanup?.videoProof) await verifyCollectionReviewVideoOrigin(db, scope, cleanup.videoProof.videoId);
     const serial = scope.serial;
     check(typeof serial === 'string' && /^[a-zA-Z0-9_.:-]{1,128}$/.test(serial));
     const locks = (await db.query('SELECT device_name,locked_by,xmin::text AS lease_version FROM device_locks WHERE device_name=$1 OR locked_by IN ($2,$3) FOR UPDATE',[serial,task.id,runId])).rows;
@@ -205,6 +208,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       ...(cleanup?.openAppProof ? { collection_open_app_timeout_sha256:cleanup.openAppProof.sha256 } : {}),
       ...(cleanup?.accountReadProof ? { collection_account_read_timeout_sha256:cleanup.accountReadProof.sha256 } : {}),
       ...(collectionAccountFallback ? { collection_account_fallback_cleanup_sha256:cleanup.ledgerSha256 } : {}),
+      ...(cleanup?.videoProof ? { collection_review_video_timeout_sha256:cleanup.videoProof.sha256 } : {}),
       ...(snapshot ? { company_snapshot:snapshot } : {}),
       ...(cleanup || released ? { cleanup_diagnostic_sha256:(cleanup ?? released).sha256, observed_central_lease_version:(cleanup ?? released).leaseVersion,
         central_release_performed:releaseCentral } : {}) };
@@ -212,7 +216,7 @@ export async function reconcileStandaloneStartFailure(pool, runId, input, { prin
       {pool:db,strict:true,emit:async()=>{}});
     check(finished.updated,'standalone_start_review_write_unconfirmed');
     const closed = await finalizeTask(db,task.id,'failed',{relay:false,onlyIfStatus:'blocked',set:{completed_at:'now'},
-      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason,collectionOpenAppTimeout,collectionAccountFallback}});
+      mergeResult:{standalone_start_review:settlement},standaloneStartFailureReconciliation:{runId,requestSha,receiptReason:failureReason,collectionOpenAppTimeout,collectionAccountFallback,collectionReviewVideoTimeout}});
     check(closed.rowCount === 1,'standalone_start_review_write_unconfirmed');
     return response(false);
   });

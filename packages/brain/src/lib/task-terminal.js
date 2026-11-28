@@ -213,7 +213,7 @@ export function buildTerminalUpdate(taskId, status, opts = {}) {
   if(standaloneStartFailure!==undefined){
     const receiptReason=standaloneStartFailure.receiptReason??'standalone_start_unconfirmed';
     const collectionCleanup = standaloneStartFailure.collectionOpenAppTimeout === true
-      || standaloneStartFailure.collectionAccountFallback === true;
+      || standaloneStartFailure.collectionAccountFallback === true || standaloneStartFailure.collectionReviewVideoTimeout === true;
     if(collectionCleanup && receiptReason!=='standalone_cleanup_unconfirmed')throw Error('standalone_terminal_proof_invalid');
     const reviewSource = collectionCleanup || receiptReason==='standalone_business_unconfirmed' ? 'notion_leadgen_102' : 'notion_leadgen_101';
     if(!['standalone_start_unconfirmed','standalone_cleanup_unconfirmed','standalone_business_unconfirmed'].includes(receiptReason))throw Error('standalone_terminal_proof_invalid');

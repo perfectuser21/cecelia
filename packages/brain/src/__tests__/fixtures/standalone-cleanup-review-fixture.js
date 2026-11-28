@@ -139,3 +139,49 @@ export function prepareCollectionAccountFallbackDesktopReview(f) {
   });
   return f;
 }
+
+export function prepareCollectionReviewVideoTimeout(f) {
+  const {review} = f.body, profile = 'fixture-cloud', videoId = '1234567890123456789';
+  const accountId = f.job.run_id+'-account';
+  const t = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
+  const v = ['version'], send = (...args) => [...t,'shell',...args];
+  const state = [...t,'get-state'], model = send('getprop','ro.product.model');
+  const call = send('dumpsys','telephony.registry'), window = send('dumpsys','window','displays');
+  const ui = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
+  const remove = send('rm','-f',ui), dump = send('uiautomator','dump','--compressed',ui), size = send('stat','-c','%s',ui);
+  const native = [
+    v,v,state,v,model,v,call,v,window,v,call,
+    v,v,state,v,model,v,send('monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'),v,window,
+    v,v,state,v,model,v,window,v,window,v,remove,v,dump,v,size,v,
+    [...t,'pull',ui,'/private/tmp/openclaw-phone/evidence/'+profile+'/'+accountId+'-before.xml'],
+    v,v,state,v,model,v,send('am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+videoId),
+    v,window,v,send('input','keyevent','127'),v,window,v,window,v,send('input','keyevent','127'),v,window,v,remove,v,dump,v,size,
+  ];
+  const prototype = f.cleanup.leaves.leaves[0];
+  const leaves = native.map((argv,index)=>({...prototype,sequence:index+1,pid:prototype.pid+index,code:index===native.length-1?1:0,
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex')}));
+  const ledger = leaves.flatMap(leaf=>{
+    const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
+    const intent={sequence,argv_sha256,intent_at,boundary};
+    return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
+  });
+  ledger.push({...leaves.at(-1),phase:'unknown'});
+  Object.assign(f.cleanup.leaves,{complete:false,requests_returned:false,leaves});
+  const at = review.observed_at;
+  Object.assign(review,{protocol:'standalone-collection-review-video-timeout/v1',admission_code:'TOOL_RESULT_UNKNOWN'});
+  review.revocation.reason = review.admission_code;
+  const controller = [
+    {operation:'business',code:'STANDALONE_COLLECTION_ACCOUNT_REQUIRED',at},
+    {operation:'phone',code:'STANDALONE_NATIVE_COMMAND',controller_exit_code:124,at,diagnostic:{stdout:'',stderr:[
+      'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+f.job.run_id,
+      'guarded command timeout: whole command and children terminated; owner lock retained','',
+    ].join('\n')}},
+    {operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at},
+  ];
+  const jsonl = rows => rows.map(x=>JSON.stringify(x)).join('\n')+'\n';
+  Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
+    collection_review_video:{...f.seal(jsonl(controller)),profile,account_evidence_id:accountId,video_id:videoId,
+      leaf_ledger:f.seal(jsonl(ledger))},
+  });
+  return f;
+}

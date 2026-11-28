@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { foundationHttpFixture } from '../fixtures/workflow-foundation-http.js';
-import { prepareCollectionAccountFallbackDesktopReview, prepareCollectionOpenAppTimeoutReview, prepareDesktopCleanupReview } from '../fixtures/standalone-cleanup-review-fixture.js';
+import { prepareCollectionAccountFallbackDesktopReview, prepareCollectionOpenAppTimeoutReview, prepareCollectionReviewVideoTimeout, prepareDesktopCleanupReview } from '../fixtures/standalone-cleanup-review-fixture.js';
 import { createFoundationTask } from '../../workflow-foundation/registry.js';
 import { digest } from '../../orchestrator/commander-decision.js';
 
@@ -13,6 +13,7 @@ afterEach(async () => { await fixture?.close(); fixture = null; });
 
 async function blockedPhone({reason = 'standalone_start_unconfirmed', holdDevice = false, stage = '101'} = {}) {
   const collection = stage === '102';
+  const sourceRun = randomUUID();
   const workflowKey = collection ? 'douyin_video_processing' : 'douyin_video_discovery';
   fixture = await foundationHttpFixture({ workflowKey, releaseTarget: 'mmv', directInput: true });
   const { registration, release } = await fixture.publish();
@@ -20,7 +21,7 @@ async function blockedPhone({reason = 'standalone_start_unconfirmed', holdDevice
     const notionPageId = randomUUID();
     return (await createFoundationTask(fixture.pool, {
       workflow_id: registration.workflow_id, release_id: release.id,
-      input: { binding_key: 'fixture', business: collection ? { source_run: 'fixture-video-batch' } : { keyword: '验收', max_candidates: 1 } },
+      input: { binding_key: 'fixture', business: collection ? { source_run: sourceRun } : { keyword: '验收', max_candidates: 1 } },
       idempotency_key: `notion-${stage}:${notionPageId}`,
     }, { notionPageId, notionTenantId: randomUUID(), notionWorkflowKey: workflowKey })).task;
   };
@@ -31,7 +32,7 @@ async function blockedPhone({reason = 'standalone_start_unconfirmed', holdDevice
     task_id: task.id, claimer: job.claimer, claimed_at: job.claimed_at,
     definition: { ...job.definition, attempt_key: task.id+':1', actor: job.claimer },
     standalone: {
-      scope: { workflow_key: workflowKey, source_commit: sourceCommit, approved_keywords: collection ? [] : ['验收'], ...(collection ? {source_run:'fixture-video-batch'} : {}), limit: 1,
+      scope: { workflow_key: workflowKey, source_commit: sourceCommit, approved_keywords: collection ? [] : ['验收'], ...(collection ? {source_run:sourceRun} : {}), limit: 1,
         serial, ...(collection ? { profile:'fixture-cloud' } : {}), line: 'fixture', company: { company_id: randomUUID(), tenant_id: task.tenant_id, version: 1, policy_id: 'fixture' } },
       skill: { name: 'douyin-leadgen-direct', version: '1.0.0', source_commit: sourceCommit, path: 'skill/SKILL.md', sha256: 'b'.repeat(64) },
     },
@@ -521,6 +522,46 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect(await f.run()).toMatchObject({status:'failed'});
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
+
+it('102 候选只读打开超时且已归位时结算原运行并安全释放租约', async () => {
+  const f = prepareCollectionReviewVideoTimeout(await desktopCleanupReview(true,'102'));
+  const wrongVideo = structuredClone(f.body);
+  wrongVideo.review.cleanup_diagnostic.collection_review_video.video_id = '2234567890123456789';
+  expect((await f.reconcile(wrongVideo)).status).toBe(400);
+  expect((await f.reconcile()).status).toBe(409);
+  const original = await f.state();
+  const {source_run:sourceRun, company, line} = original.payload.scope;
+  const producerId = randomUUID();
+  const videoId = f.body.review.cleanup_diagnostic.collection_review_video.video_id;
+  const video = {video_id:videoId,video_url:'https://www.douyin.com/video/'+videoId,line_key:line,author:'fixture author',
+    discovery_metrics:{digest:'a'.repeat(64),company_binding:{...company,line_key:line,run_id:sourceRun}}};
+  const upstream = {task_id:producerId,run_id:sourceRun,status:'completed',business_pass:true,
+    receipts:[{activity_key:'collect_videos',status:'completed',outputs:{Video:[video]}}]};
+  await fixture.pool.query("INSERT INTO tasks(id,title,status,payload,result,tenant_id) VALUES($1,'fixture 101','completed',$2,$3,$4)",
+    [producerId,{workflow_key:'douyin_video_discovery'},{foundation_result:upstream},original.tenant_id]);
+  await fixture.pool.query("INSERT INTO task_runs(task_id,run_id,status,ended_at) VALUES($1,$2,'success',NOW())",[producerId,sourceRun]);
+  const wrongProof = structuredClone(f.body);
+  const diagnostic = wrongProof.review.cleanup_diagnostic, proof = diagnostic.collection_review_video;
+  proof.video_id = '2234567890123456789';
+  const hash = id => createHash('sha256').update(JSON.stringify(['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555','shell',
+    'am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+id])).digest('hex');
+  const replaceVideo = raw => raw.replaceAll(hash(videoId),hash(proof.video_id));
+  Object.assign(diagnostic,f.seal(replaceVideo(diagnostic.raw)));
+  proof.leaf_ledger = f.seal(replaceVideo(proof.leaf_ledger.raw));
+  expect((await f.reconcile(wrongProof)).status).toBe(409);
+  expect((await f.state()).status).toBe('blocked');
+  const wrongLease = structuredClone(f.body);
+  wrongLease.review.cleanup_diagnostic.central_lease_version = '1';
+  expect((await f.reconcile(wrongLease)).status).toBe(409);
+  const result = await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect(result.body).toMatchObject({status:'failed',retry_safe:false,replayed:false});
+  const task = await f.state();
+  expect(task.result.standalone_start_review).toMatchObject({central_release_performed:true});
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.readLock()).locked_by).toBeNull();
+  expect((await f.finish()).body).toMatchObject({status:'blocked'});
+});
 
 it('102 已完成截图和原生账号复核后，确认归位并结算原失败运行', async () => {
   const f = prepareCollectionAccountFallbackDesktopReview(await desktopCleanupReview(true,'102'));
