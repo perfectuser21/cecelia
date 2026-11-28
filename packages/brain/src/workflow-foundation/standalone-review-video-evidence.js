@@ -2,7 +2,7 @@ import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 
 export const collectionReviewVideo = 'standalone-collection-review-video-timeout/v1';
 
-export function collectionReviewVideoCommands({profile,account_evidence_id:accountId,video_id:videoId,account_recovery:recovery,link_after_open:linkAfterOpen}, runId, target) {
+export function collectionReviewVideoCommands({profile,account_evidence_id:accountId,video_id:videoId,account_recovery:recovery,link_after_open:linkAfterOpen,cleanAccount}, runId, target) {
   requireFoundation(typeof profile==='string' && /^[A-Za-z0-9_-]{1,80}$/.test(profile)
     && typeof accountId==='string' && accountId.startsWith(runId+'-') && /^[A-Za-z0-9_-]{1,120}$/.test(accountId)
     && typeof videoId==='string' && /^[0-9]{16,24}$/.test(videoId), 'standalone_start_review_invalid', 400);
@@ -23,6 +23,20 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
   const begin = [...route,calls,version,window,version,calls,...route,launch,version,window];
   const account = [...route,window,version,window,version,...capture,version];
   const detail = [...route,open,version,window,version,pause,version,window,version,window,version,pause,version,window,version,...capture];
+  const managedOpen = evidenceId => [
+    ...route,open,version,window,version,window,version,pause,version,window,version,...capture,version,
+    [...target,'pull',xml,proofDirectory+evidenceId+'-openvideo-w1.xml'],
+    version,window,version,[...target,'exec-out','screencap','-p'],version,window,
+  ];
+  if (cleanAccount) {
+    const {openEvidenceId,x,y} = cleanAccount;
+    requireFoundation(recovery===undefined && !linkAfterOpen && typeof openEvidenceId==='string'
+      && openEvidenceId!==accountId && openEvidenceId.startsWith(runId+'-')
+      && /^[A-Za-z0-9_-]{1,120}$/.test(openEvidenceId), 'standalone_start_review_invalid', 400);
+    const profileRead = [...target,'pull',xml,proofDirectory+accountId+'-profile.xml'];
+    return [...begin,...account,pullAccount,version,shell('input','tap',x,y),version,...capture,version,profileRead,
+      ...managedOpen(openEvidenceId)];
+  }
   if (recovery === undefined) return [...begin,...account,pullAccount,...detail];
 
   onlyKeys(recovery,['snapshot_id','back_id','open_evidence_id','screen','tap']);
@@ -47,16 +61,11 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
   ];
   const toggle = shell('input','keyevent','85');
   if (linkAfterOpen) {
-    const opened = [
-      ...route,open,version,window,version,window,version,pause,version,window,version,...capture,version,
-      [...target,'pull',xml,proofDirectory+openEvidenceId+'-openvideo-w1.xml'],
-      version,window,version,[...target,'exec-out','screencap','-p'],version,window,
-    ];
     const guard = [
       ...route,window,version,pause,version,
       ...capture,version,...capture,version,...capture,version,toggle,version,
     ];
-    return [...recoveredAccount,...opened,...guard];
+    return [...recoveredAccount,...managedOpen(openEvidenceId),...guard];
   }
   return [...recoveredAccount,...detail,version,absent,version,toggle,version,...capture.slice(0,3)];
 }
