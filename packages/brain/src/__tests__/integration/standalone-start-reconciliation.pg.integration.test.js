@@ -538,8 +538,22 @@ it.each([{}, { uiProfile:'fixture-cloud' }, { uiProfile:'fixture-cloud', account
     const proof = wrongNavigation.review.cleanup_diagnostic.account_read_timeout.account_navigation;
     proof.hierarchy = f.seal(proof.hierarchy.raw.replace('[630,1150][660,1190]', '[630,1150][670,1190]'));
     expect((await f.reconcile(wrongNavigation)).status).toBe(400);
-    proof.evidence_id = randomUUID()+'-account';
-    expect((await f.reconcile(wrongNavigation)).status).toBe(400);
+    const wrongOwner = structuredClone(f.body);
+    wrongOwner.review.cleanup_diagnostic.account_read_timeout.account_navigation.evidence_id = randomUUID()+'-account';
+    expect((await f.reconcile(wrongOwner)).status).toBe(400);
+    const malformedNavigation = structuredClone(f.body);
+    const malformedProof = malformedNavigation.review.cleanup_diagnostic.account_read_timeout.account_navigation;
+    const original = malformedProof.hierarchy.raw;
+    for (const malformed of [
+      original.replace(' />','  >'),
+      original.replace('<node package=', '<?node package=').replace(' />','?>'),
+      original.replace('text="pass"', 'text="&#0;"'),
+      original.replace('content-desc="我，按钮"', "content-desc='我，按钮'"),
+    ]) {
+      expect(Buffer.byteLength(malformed)).toBe(Buffer.byteLength(original));
+      malformedProof.hierarchy = f.seal(malformed);
+      expect((await f.reconcile(malformedNavigation)).status).toBe(400);
+    }
   }
   const busy = await fixture.pool.query("UPDATE device_locks SET locked_by=$2 WHERE device_name=$1 RETURNING xmin::text AS version",[serial,pending.id]);
   f.body.review.cleanup_diagnostic.central_lease_version = busy.rows[0].version;

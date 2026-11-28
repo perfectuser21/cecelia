@@ -124,25 +124,69 @@ function verifyCollectionOpenAppTimeout(proof, review, host, target, leaves, ter
   return {sha256:proof.sha256,ledgerSha256:verifyLeafLedger(proof.leaf_ledger,leaves,commands,terminalAckMissing),profile};
 }
 
+function validXmlCodePoint(unit) {
+  return unit === 9 || unit === 10 || unit === 13 || (unit >= 0x20 && unit <= 0xd7ff)
+    || (unit >= 0xe000 && unit <= 0xfffd) || (unit >= 0x10000 && unit <= 0x10ffff);
+}
+
+// UI Automator produces a hierarchy of nested node elements. Reject all other XML constructs.
+function androidHierarchyNodes(xml) {
+  const document = /^<\?xml version=(['"])1\.0\1 encoding=(['"])UTF-8\2 standalone=(['"])yes\3\s*\?><hierarchy rotation="[0-3]">([\s\S]*)<\/hierarchy>$/.exec(xml);
+  invalid(document);
+  for (const character of xml) invalid(validXmlCodePoint(character.codePointAt(0)));
+  const content = document[4];
+  const nodes = [];
+  let depth = 0;
+  let offset = 0;
+  for (const tag of content.matchAll(/<node(\s[^<>]*?)(\/?)>|<\/node>/g)) {
+    invalid(!content.slice(offset,tag.index).trim());
+    offset=tag.index+tag[0].length;
+    if (tag[0]==='</node>') {
+      invalid(depth>0);
+      depth--;
+      continue;
+    }
+    invalid(depth>0 || nodes.length===0);
+    const attributes = new Map();
+    let end = 0;
+    for (const attribute of tag[1].matchAll(/\s+([A-Za-z_][\w.-]*)="([^"<>]*)"/g)) {
+      const [,name,value]=attribute;
+      invalid(attribute.index===end && !attributes.has(name)
+        && !/&(?!amp;|lt;|gt;|quot;|apos;|#[0-9]+;|#x[0-9a-fA-F]+;)/.test(value));
+      for (const [,decimal,hex] of value.matchAll(/&#(?:([0-9]+)|x([0-9a-fA-F]+));/g)) {
+        const unit = decimal===undefined ? Number.parseInt(hex,16) : Number(decimal);
+        invalid(validXmlCodePoint(unit));
+      }
+      end=attribute.index+attribute[0].length;
+      attributes.set(name,value);
+    }
+    invalid(attributes.size>0 && !tag[1].slice(end).trim());
+    nodes.push(attributes);
+    if (!tag[2]) depth++;
+  }
+  invalid(nodes.length>0 && depth===0 && !content.slice(offset).trim());
+  return nodes;
+}
+
 function accountNavigationEvidence(navigation, host) {
   onlyKeys(navigation,['evidence_id','hierarchy']);
   const {evidence_id: evidenceId,hierarchy} = navigation;
-  const prefix = host.run_id + '-';
-  invalid(typeof evidenceId==='string' && evidenceId.startsWith(prefix)
-    && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(evidenceId.slice(prefix.length)));
+  invalid(typeof evidenceId==='string' && evidenceId.startsWith(host.run_id+'-')
+    && /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/.test(evidenceId));
   onlyKeys(hierarchy,['raw','sha256']);
   const xml = hierarchy.raw;
-  invalid(typeof xml==='string' && Buffer.byteLength(xml)<=36_000 && sha(xml)===hierarchy.sha256
-    && /^<\?xml [^<>]*\?><hierarchy rotation="[0-3]">/.test(xml) && xml.endsWith('</hierarchy>')
-    && !xml.includes('<!'));
-  const nodes = Array.from(xml.matchAll(/<node\s[^<>]*>/g), ([tag])=>tag)
-    .filter(tag => /\scontent-desc="我，按钮"/.test(tag));
-  invalid(nodes.length===1 && /\spackage="com\.ss\.android\.ugc\.aweme"/.test(nodes[0])
-    && /\senabled="true"/.test(nodes[0]));
-  const bounds = /\sbounds="\[(\d{1,4}),(\d{1,4})\]\[(\d{1,4}),(\d{1,4})\]"/.exec(nodes[0]);
-  invalid(bounds);
+  invalid(typeof xml==='string' && Buffer.byteLength(xml)<=36_000 && sha(xml)===hierarchy.sha256);
+  const nodes = androidHierarchyNodes(xml);
+  const hasAccountId = nodes.some(node=>Array.from(node.values()).some(value=>value.includes('抖音号：')));
+  invalid(!hasAccountId || !nodes.some(node=>node.get('content-desc')==='私信'
+    || node.get('text')==='编辑主页' || node.get('content-desc')?.startsWith('切换账号')));
+  const me = nodes.filter(node=>node.get('content-desc')==='我，按钮');
+  invalid(me.length===1 && me[0].get('package')==='com.ss.android.ugc.aweme' && me[0].get('enabled')==='true');
+  const screen = /^\[0,0\]\[([1-9]\d{0,3}),([1-9]\d{0,3})\]$/.exec(nodes[0].get('bounds')??'');
+  const bounds = /^\[(\d{1,4}),(\d{1,4})\]\[(\d{1,4}),(\d{1,4})\]$/.exec(me[0].get('bounds')??'');
+  invalid(screen && bounds);
   const [x1,y1,x2,y2] = bounds.slice(1).map(Number);
-  invalid(x2>x1 && y2>y1);
+  invalid(x2>x1 && y2>y1 && x2<=Number(screen[1]) && y2<=Number(screen[2]));
   return {evidenceId, bytes:Buffer.byteLength(xml), x:String(Math.floor((x1+x2)/2)), y:String(Math.floor((y1+y2)/2))};
 }
 

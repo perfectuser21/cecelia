@@ -40,7 +40,7 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRea
   const launch = [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'];
   const commands = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
     version,launch,version,foreground,version,foreground,version];
-  const hierarchy = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hierarchy rotation="0"><node package="com.ss.android.ugc.aweme" enabled="true" content-desc="我，按钮" bounds="[630,1150][660,1190]" /></hierarchy>';
+  const hierarchy = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hierarchy rotation="0"><node bounds="[0,0][720,1280]" text="pass"><node package="com.ss.android.ugc.aweme" enabled="true" content-desc="我，按钮" bounds="[630,1150][660,1190]" /></node></hierarchy>';
   const evidenceId = f.job.run_id+'-account';
   const ui = '/sdcard/douyin-leadgen-ui-'+uiProfile+'.xml';
   if (uiProfile) {
