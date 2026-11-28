@@ -255,11 +255,15 @@ export function verifyDesktopCleanupProof(review, host) {
 
 export function verifyReleasedCleanupProof(review, host, blockedAt) {
   const artifact = review.cleanup_diagnostic;
-  onlyKeys(artifact, ['raw','sha256','adb_endpoint','adb_serial','central_lease_version','terminal_ack_ledger','account_profile']);
+  onlyKeys(artifact, ['raw','sha256','adb_endpoint','adb_serial','central_lease_version','terminal_ack_ledger',
+    'account_profile','account_snapshot_id']);
   const { raw, sha256, adb_endpoint: endpoint, adb_serial: serial, central_lease_version: leaseVersion,
-    terminal_ack_ledger: ledger, account_profile: accountProfile } = artifact;
+    terminal_ack_ledger: ledger, account_profile: accountProfile, account_snapshot_id: snapshotId } = artifact;
   const accountFallback = accountProfile !== undefined;
   invalid(!accountFallback || typeof accountProfile === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(accountProfile));
+  const snapshotPrefix = host.run_id + '-';
+  invalid(snapshotId === undefined || accountFallback && typeof snapshotId === 'string'
+    && snapshotId.startsWith(snapshotPrefix) && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(snapshotId.slice(snapshotPrefix.length)));
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
   invalid(review.admission_code === 'CLEANUP_VERIFIED_NO_BUSINESS' && review.hardware_diagnostic === undefined
@@ -315,13 +319,20 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
       clear,version,[...target,'shell','uiautomator','dump','--compressed',xml],version,
       [...target,'shell','stat','-c','%s',xml],version,
       [...target,'shell',`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`]];
+    if (snapshotId !== undefined) {
+      // The fallback may capture and retrieve one run-owned screenshot. It may not tap or navigate.
+      const remoteShot = '/sdcard/douyin-leadgen-shot-' + accountProfile + '.png';
+      const localShot = '/private/tmp/openclaw-phone/evidence/' + accountProfile + '/' + snapshotId + '.png';
+      accountCommands.push(version,version,state,version,
+        [...target,'shell','screencap','-p',remoteShot],version,[...target,'pull',remoteShot,localShot]);
+    }
     accountStart = prefix.findIndex(leaf => leaf.argv_sha256 === commandDigest(clear)) - 10;
     invalid(launchIndex !== -1 && accountStart >= startupEnd && accountStart + accountCommands.length <= prefix.length);
     missingUiStats = [accountStart + 14];
   }
   verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt), null, missingUiStats);
 
-  // 非只读动作限于完整启动和同账号预检清除固定 XML，其余逐条只读核验。
+  // 仅允许固定的启动、同账号预检、截图回传和后缀归位；其他命令逐条只读核验。
   const commands = prefix.map((leaf,index) => {
     if(launchIndex !== -1 && index >= startupStart && index < startupEnd) return startup[index-startupStart];
     if (accountFallback && index >= accountStart && index < accountStart + accountCommands.length) return accountCommands[index-accountStart];
