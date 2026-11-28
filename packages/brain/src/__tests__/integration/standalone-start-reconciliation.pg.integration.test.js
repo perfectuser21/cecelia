@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { foundationHttpFixture } from '../fixtures/workflow-foundation-http.js';
-import { prepareCollectionOpenAppTimeoutReview, prepareDesktopCleanupReview } from '../fixtures/standalone-cleanup-review-fixture.js';
+import { prepareCollectionAccountFallbackDesktopReview, prepareCollectionOpenAppTimeoutReview, prepareDesktopCleanupReview } from '../fixtures/standalone-cleanup-review-fixture.js';
 import { createFoundationTask } from '../../workflow-foundation/registry.js';
 import { digest } from '../../orchestrator/commander-decision.js';
 
@@ -521,6 +521,30 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect(await f.run()).toMatchObject({status:'failed'});
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
+
+it('102 已完成截图和原生账号复核后，确认归位并结算原失败运行', async () => {
+  const f = prepareCollectionAccountFallbackDesktopReview(await desktopCleanupReview(true,'102'));
+  const input = structuredClone(f.body);
+  input.review.cleanup_diagnostic.account_fallback.tap = [30,30];
+  expect((await f.reconcile(input)).status).toBe(400);
+  const moved = structuredClone(f.body);
+  const artifact = moved.review.cleanup_diagnostic;
+  const cleanup = JSON.parse(artifact.raw);
+  cleanup.leaves.ledger = cleanup.leaves.ledger.replace('/collection-leaves-','/nested/../collection-leaves-');
+  Object.assign(artifact,f.seal(JSON.stringify(cleanup)));
+  expect((await f.reconcile(moved)).status).toBe(400);
+  const wrongOwner = structuredClone(f.body);
+  wrongOwner.review.cleanup_diagnostic.account_fallback.snapshot_id = randomUUID()+'-snapshot';
+  expect((await f.reconcile(wrongOwner)).status).toBe(400);
+  const result = await f.reconcile();
+  expect(result.status,JSON.stringify(result.body)).toBe(200);
+  expect(result.body).toMatchObject({status:'failed',retry_safe:false,replayed:false});
+  const task = await f.state();
+  expect(task.result.standalone_start_review).toMatchObject({central_release_performed:true});
+  expect((await f.run()).status).toBe('failed');
+  expect((await f.readLock()).locked_by).toBeNull();
+  expect((await f.finish()).body).toMatchObject({status:'blocked'});
+});
 
 it('102 结算及时处理含合法长空白的账号控件树', async () => {
   const f = prepareCollectionOpenAppTimeoutReview(await desktopCleanupReview(false,'102'), {

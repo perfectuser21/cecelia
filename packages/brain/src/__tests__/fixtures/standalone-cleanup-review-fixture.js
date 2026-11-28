@@ -96,3 +96,46 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRea
   });
   return f;
 }
+
+
+export function prepareCollectionAccountFallbackDesktopReview(f) {
+  const { review } = f.body;
+  const profile = 'fixture-cloud';
+  const snapshotId = f.job.run_id+'-snapshot';
+  const accountId = f.job.run_id+'-account';
+  const t = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
+  const v = ['version'];
+  const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
+  const shot = '/sdcard/douyin-leadgen-shot-'+profile+'.png';
+  const location = '/private/tmp/openclaw-phone/evidence/'+profile+'/';
+  const state = [...t,'get-state'], model = [...t,'shell','getprop','ro.product.model'];
+  const telephony = [...t,'shell','dumpsys','telephony.registry'];
+  const window = [...t,'shell','dumpsys','window','displays'];
+  const clear = [...t,'shell','rm','-f',xml];
+  const dump = [...t,'shell','uiautomator','dump','--compressed',xml];
+  const size = [...t,'shell','stat','-c','%s',xml];
+  const commands = [
+    v,v,state,v,model,v,telephony,v,window,v,telephony,
+    v,v,state,v,model,v,[...t,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'],v,window,
+    v,v,state,v,model,v,window,v,window,v,clear,v,dump,v,size,v,
+    [...t,'shell',`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`],
+    v,v,state,v,[...t,'shell','screencap','-p',shot],v,[...t,'pull',shot,location+snapshotId+'.png'],
+    v,v,state,v,window,v,[...t,'shell','input','tap','648','1173'],
+    v,v,state,v,model,v,window,v,window,v,clear,v,dump,v,size,v,[...t,'pull',xml,location+accountId+'-before.xml'],
+  ];
+  const prototype = f.cleanup.leaves.leaves[0];
+  const leaves = commands.map((argv,index)=>({...prototype,sequence:index+1,pid:prototype.pid+index,code:index===34?1:0,
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex')}));
+  const ledger = leaves.flatMap(leaf=>{
+    const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
+    const intent={sequence,argv_sha256,intent_at,boundary};
+    return [{...intent,phase:'intent'},{...intent,pid,started_at,phase:'started'},{...leaf,phase:'exit'}];
+  });
+  Object.assign(f.cleanup.leaves,{complete:false,leaves});
+  review.protocol = 'standalone-collection-account-fallback-cleanup/v1';
+  Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
+    terminal_ack_ledger:f.seal(ledger.map(x=>JSON.stringify(x)).join('\n')+'\n'),
+    account_fallback:{profile,snapshot_id:snapshotId,account_id:accountId,screen:[720,1280],tap:[648,1173]},
+  });
+  return f;
+}
