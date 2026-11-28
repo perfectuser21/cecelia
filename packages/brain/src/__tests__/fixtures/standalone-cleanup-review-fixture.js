@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 
 export async function prepareDesktopCleanupReview(f, pool, serial) {
   const now = new Date();
@@ -140,7 +141,7 @@ export function prepareCollectionAccountFallbackDesktopReview(f) {
   return f;
 }
 
-export function prepareCollectionReviewVideoTimeout(f) {
+export function prepareCollectionReviewVideoTimeout(f, recoveredAccount = false) {
   const {review} = f.body, profile = 'fixture-cloud', videoId = '1234567890123456789';
   const accountId = f.job.run_id+'-account';
   const t = ['-H','127.0.0.1','-P','5045','-s','127.0.0.1:15555'];
@@ -157,8 +158,25 @@ export function prepareCollectionReviewVideoTimeout(f) {
     v,v,state,v,model,v,send('am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+videoId),
     v,window,v,send('input','keyevent','127'),v,window,v,window,v,send('input','keyevent','127'),v,window,v,remove,v,dump,v,size,
   ];
+  const mediaDirectory = '/private/tmp/openclaw-phone/evidence/'+profile+'/';
+  const navigation = {snapshot_id:f.job.run_id+'-shot',
+    back_id:f.job.run_id+'-returned',open_evidence_id:f.job.run_id+'-video-open',screen:[720,1280],tap:[648,1173]};
+  const failures = recoveredAccount ? [35,106] : [native.length];
+  if (recoveredAccount) {
+    const route = [v,v,state,v], identify = [...route,model,v];
+    const absent = send(`if [ ! -e '${ui}' ] && [ ! -L '${ui}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`);
+    const shotPath = '/sdcard/douyin-leadgen-shot-'+profile+'.png';
+    const shot = send('screencap','-p',shotPath);
+    const pullImage = id => [...t,'pull',shotPath,mediaDirectory+id+'.png'];
+    const account = [...identify,window,v,window,v,remove,v,dump,v,size,v,[...t,'pull',ui,mediaDirectory+accountId+'-before.xml']];
+    native.splice(35,2,v,absent,
+      ...route,shot,v,pullImage(navigation.snapshot_id),
+      ...route,window,v,send('input','keyevent','4'),v,window,v,shot,v,pullImage(navigation.back_id),
+      ...route,window,v,send('input','tap',...navigation.tap.map(String)),...account);
+    native.push(v,absent,v,send('input','keyevent','85'),v,remove,v,dump);
+  }
   const prototype = f.cleanup.leaves.leaves[0];
-  const leaves = native.map((argv,index)=>({...prototype,sequence:index+1,pid:prototype.pid+index,code:index===native.length-1?1:0,
+  const leaves = native.map((argv,index)=>({...prototype,sequence:index+1,pid:prototype.pid+index,code:failures.includes(index+1)?1:0,
     argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex')}));
   const ledger = leaves.flatMap(leaf=>{
     const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
@@ -178,10 +196,17 @@ export function prepareCollectionReviewVideoTimeout(f) {
     ].join('\n')}},
     {operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at},
   ];
+  if (recoveredAccount) {
+    controller.shift();
+    controller[0].diagnostic.stderr=`paused-idle: phase=paused-douyin evidence_id=${navigation.open_evidence_id}-gate-fg1 attempt=1 dump_rc=0 elapsed_ms=58766; could not get idle state; no fresh XML; using single toggle-dump-toggle\n`
+      +controller[0].diagnostic.stderr;
+  }
   const jsonl = rows => rows.map(x=>JSON.stringify(x)).join('\n')+'\n';
+  const ledgerProof = f.seal(jsonl(ledger));
   Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
     collection_review_video:{...f.seal(jsonl(controller)),profile,account_evidence_id:accountId,video_id:videoId,
-      leaf_ledger:f.seal(jsonl(ledger))},
+      ...(recoveredAccount?{account_recovery:navigation}:{}),leaf_ledger:recoveredAccount
+        ? {gzip_base64:gzipSync(ledgerProof.raw).toString('base64'),sha256:ledgerProof.sha256} : ledgerProof},
   });
   return f;
 }

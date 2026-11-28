@@ -1,8 +1,8 @@
-import { UUID, requireFoundation } from './contracts.js';
+import { UUID, onlyKeys, requireFoundation } from './contracts.js';
 
 export const collectionReviewVideo = 'standalone-collection-review-video-timeout/v1';
 
-export function collectionReviewVideoCommands({profile,account_evidence_id:accountId,video_id:videoId}, runId, target) {
+export function collectionReviewVideoCommands({profile,account_evidence_id:accountId,video_id:videoId,account_recovery:recovery}, runId, target) {
   requireFoundation(typeof profile==='string' && /^[A-Za-z0-9_-]{1,80}$/.test(profile)
     && typeof accountId==='string' && accountId.startsWith(runId+'-') && /^[A-Za-z0-9_-]{1,120}$/.test(accountId)
     && typeof videoId==='string' && /^[0-9]{16,24}$/.test(videoId), 'standalone_start_review_invalid', 400);
@@ -12,18 +12,39 @@ export function collectionReviewVideoCommands({profile,account_evidence_id:accou
   const calls = shell('dumpsys','telephony.registry');
   const window = shell('dumpsys','window','displays');
   const launch = shell('monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1');
-  const route = [version,version,state,version,shell('getprop','ro.product.model'),version];
+  const fastRoute = [version,version,state,version];
+  const route = [...fastRoute,shell('getprop','ro.product.model'),version];
   const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
   const capture = [shell('rm','-f',xml),version,shell('uiautomator','dump','--compressed',xml),version,shell('stat','-c','%s',xml)];
-  const proofPath = '/private/tmp/openclaw-phone/evidence/'+profile+'/'+accountId+'-before.xml';
+  const proofDirectory = '/private/tmp/openclaw-phone/evidence/'+profile+'/';
+  const pullAccount = [...target,'pull',xml,proofDirectory+accountId+'-before.xml'];
   const open = shell('am','start','-a','android.intent.action.VIEW','-d','snssdk1128://aweme/detail/'+videoId);
   const pause = shell('input','keyevent','127');
-  // The last XML size request returned but the native parent lost its acknowledgement.
+  const begin = [...route,calls,version,window,version,calls,...route,launch,version,window];
+  const account = [...route,window,version,window,version,...capture,version];
+  const detail = [...route,open,version,window,version,pause,version,window,version,window,version,pause,version,window,version,...capture];
+  if (recovery === undefined) return [...begin,...account,pullAccount,...detail];
+
+  onlyKeys(recovery,['snapshot_id','back_id','open_evidence_id','screen','tap']);
+  const {snapshot_id:snapshotId,back_id:backId,open_evidence_id:openEvidenceId,screen,tap} = recovery;
+  const ids = [accountId,snapshotId,backId,openEvidenceId];
+  const pair = value => Array.isArray(value) && value.length===2
+    && value.every(entry=>Number.isSafeInteger(entry) && entry>0 && entry<=8192);
+  requireFoundation(new Set(ids).size===ids.length && ids.every(id=>typeof id==='string'
+    && id.startsWith(runId+'-') && /^[A-Za-z0-9_-]{1,120}$/.test(id))
+    && pair(screen) && pair(tap) && tap[0]*100>=screen[0]*84 && tap[0]*100<=screen[0]*98
+    && tap[1]*100>=screen[1]*88 && tap[1]*100<=screen[1]*95, 'standalone_start_review_invalid', 400);
+
+  const absent = shell(`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`);
+  const image = '/sdcard/douyin-leadgen-shot-'+profile+'.png';
+  const photo = id => [shell('screencap','-p',image),version,[...target,'pull',image,proofDirectory+id+'.png']];
   return [
-    ...route,calls,version,window,version,calls,
-    ...route,launch,version,window,
-    ...route,window,version,window,version,...capture,version,[...target,'pull',xml,proofPath],
-    ...route,open,version,window,version,pause,version,window,version,window,version,pause,version,window,version,...capture,
+    ...begin,...account,absent,
+    ...fastRoute,...photo(snapshotId),
+    ...fastRoute,window,version,shell('input','keyevent','4'),version,window,version,...photo(backId),
+    ...fastRoute,window,version,shell('input','tap',...tap.map(String)),
+    ...account,pullAccount,
+    ...detail,version,absent,version,shell('input','keyevent','85'),version,...capture.slice(0,3),
   ];
 }
 
