@@ -136,7 +136,7 @@ function androidHierarchyNodes(xml) {
   for (const character of xml) invalid(validXmlCodePoint(character.codePointAt(0)));
   const content = document[4];
   const nodes = [];
-  const attributePattern = /\s+([A-Za-z_][\w.-]*)="([^"<>]*)"/y;
+  const attributePattern = /([A-Za-z_][\w.-]*)="([^"<>]*)"/y;
   let depth = 0;
   let offset = 0;
   for (const tag of content.matchAll(/<node(\s[^<>]*?)(\/?)>|<\/node>/g)) {
@@ -150,8 +150,12 @@ function androidHierarchyNodes(xml) {
     invalid(depth>0 || nodes.length===0);
     const attributes = new Map();
     const body = tag[1].trimEnd();
-    attributePattern.lastIndex = 0;
-    while (attributePattern.lastIndex < body.length) {
+    let cursor = 0;
+    while (cursor < body.length) {
+      const separator = cursor;
+      while (cursor < body.length && /\s/.test(body[cursor])) cursor++;
+      invalid(cursor > separator);
+      attributePattern.lastIndex = cursor;
       const attribute = attributePattern.exec(body);
       invalid(attribute);
       const [,name,value]=attribute;
@@ -162,6 +166,7 @@ function androidHierarchyNodes(xml) {
         invalid(validXmlCodePoint(unit));
       }
       attributes.set(name,value);
+      cursor = attributePattern.lastIndex;
     }
     invalid(attributes.size>0);
     nodes.push(attributes);
