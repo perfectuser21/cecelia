@@ -522,7 +522,7 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snap
   expect((await f.claim()).body.job.task_id).toBe(next.id);
 },30000);
 
-it.each([{}, { uiProfile:'fixture-cloud' }, { uiProfile:'fixture-cloud', accountRead:true }])('102 受管手机超时后，仅凭原回执和现场归位结算 %j',async(options)=>{
+it.each([{}, { uiProfile:'fixture-cloud' }, { uiProfile:'fixture-cloud', accountRead:true }, { uiProfile:'fixture-cloud', accountRead:true, accountNavigation:true }])('102 受管手机超时后，仅凭原回执和现场归位结算 %j',async(options)=>{
   const f = prepareCollectionOpenAppTimeoutReview(await desktopCleanupReview(false,'102'),options);
   const pending = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -533,6 +533,14 @@ it.each([{}, { uiProfile:'fixture-cloud' }, { uiProfile:'fixture-cloud', account
   const artifact = wrongLedger.review.cleanup_diagnostic[options.accountRead?'account_read_timeout':'open_app_timeout'];
   Object.assign(artifact.leaf_ledger,f.seal(artifact.leaf_ledger.raw.replace('"phase":"exit"','"phase":"unknown"')));
   expect((await f.reconcile(wrongLedger)).status).toBe(400);
+  if (options.accountNavigation) {
+    const wrongNavigation = structuredClone(f.body);
+    const proof = wrongNavigation.review.cleanup_diagnostic.account_read_timeout.account_navigation;
+    proof.hierarchy = f.seal(proof.hierarchy.raw.replace('[630,1150][660,1190]', '[630,1150][670,1190]'));
+    expect((await f.reconcile(wrongNavigation)).status).toBe(400);
+    proof.evidence_id = randomUUID()+'-account';
+    expect((await f.reconcile(wrongNavigation)).status).toBe(400);
+  }
   const busy = await fixture.pool.query("UPDATE device_locks SET locked_by=$2 WHERE device_name=$1 RETURNING xmin::text AS version",[serial,pending.id]);
   f.body.review.cleanup_diagnostic.central_lease_version = busy.rows[0].version;
   expect((await f.reconcile()).status).toBe(409);

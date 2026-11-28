@@ -30,7 +30,7 @@ export async function prepareDesktopCleanupReview(f, pool, serial) {
   return {...f,readLock,cleanup,seal};
 }
 
-export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRead = false } = {}) {
+export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRead = false, accountNavigation = false } = {}) {
   const { review } = f.body;
   review.protocol = accountRead ? 'standalone-102-account-read-timeout-review/v1' : 'standalone-102-open-app-timeout-review/v1';
   review.admission_code = review.revocation.reason = 'TOOL_RESULT_UNKNOWN';
@@ -40,12 +40,23 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRea
   const launch = [...target,'shell','monkey','-p','com.ss.android.ugc.aweme','-c','android.intent.category.LAUNCHER','1'];
   const commands = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
     version,launch,version,foreground,version,foreground,version];
+  const hierarchy = '<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hierarchy rotation="0"><node package="com.ss.android.ugc.aweme" enabled="true" content-desc="我，按钮" bounds="[630,1150][660,1190]" /></hierarchy>';
+  const evidenceId = f.job.run_id+'-account';
+  const ui = '/sdcard/douyin-leadgen-ui-'+uiProfile+'.xml';
   if (uiProfile) {
-    const ui = '/sdcard/douyin-leadgen-ui-'+uiProfile+'.xml';
     const remove = [...target,'shell','rm','-f',ui];
     const dump = [...target,'shell','uiautomator','dump','--compressed',ui];
     const stat = [...target,'shell','stat','-c','%s',ui];
-    if (accountRead) {
+    if (accountNavigation) {
+      const state = [...target,'get-state'], model = [...target,'shell','getprop','ro.product.model'];
+      const telephony = [...target,'shell','dumpsys','telephony.registry'];
+      const pulled = '/private/tmp/openclaw-phone/evidence/'+uiProfile+'/'+evidenceId+'-before.xml';
+      commands.splice(9);
+      commands.unshift(version,version,state,version,model,version,telephony,version,foreground,version,telephony);
+      commands.push(version,version,state,version,model,version,foreground,version,foreground,version,
+        remove,version,dump,version,stat,version,[...target,'pull',ui,pulled],
+        version,[...target,'shell','input','tap','645','1170'],version,remove,version,dump,version,stat);
+    } else if (accountRead) {
       commands.splice(9);
       commands.push(version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],
         version,foreground,version,foreground,version,remove,version,dump,version,stat,version,remove,version,dump,version,stat);
@@ -54,7 +65,7 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRea
   }
   const fields = f.cleanup.leaves.leaves[0];
   const leaves = commands.map((argv,index)=>({...fields,sequence:index+1,pid:fields.pid+index,
-    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex'),code:uiProfile&&(accountRead?[23,29]:[16]).includes(index)?1:0}));
+    argv_sha256:createHash('sha256').update(JSON.stringify(argv)).digest('hex'),code:uiProfile&&!accountNavigation&&(accountRead?[23,29]:[16]).includes(index)?1:0}));
   f.cleanup.leaves.leaves = leaves;
   const rawLines = rows => rows.map(row=>JSON.stringify(row)).join('\n')+'\n';
   const ledger = leaves.flatMap(leaf=>{
@@ -66,19 +77,21 @@ export function prepareCollectionOpenAppTimeoutReview(f, { uiProfile, accountRea
   Object.assign(review.cleanup_diagnostic,f.seal(JSON.stringify(f.cleanup)),{
     [accountRead?'account_read_timeout':'open_app_timeout']:{
       ...f.seal(rawLines([
-        ...(accountRead?[{operation:'business',code:'STANDALONE_COLLECTION_ACCOUNT_REQUIRED',at:review.observed_at}]:[]),
+        ...(accountRead&&!accountNavigation?[{operation:'business',code:'STANDALONE_COLLECTION_ACCOUNT_REQUIRED',at:review.observed_at}]:[]),
         {operation:'phone',code:'STANDALONE_NATIVE_COMMAND',controller_exit_code:124,at:review.observed_at,
           diagnostic:{stdout:'',stderr:[
+            ...(accountNavigation?[ui+': 1 file pulled, 0 skipped. 0.1 MB/s ('+Buffer.byteLength(hierarchy)+' bytes in 0.505s)']:[]),
             ...(!accountRead?['args: [-p, com.ss.android.ugc.aweme, -c, android.intent.category.LAUNCHER, 1]',
             ' arg: "-p"',' arg: "com.ss.android.ugc.aweme"',' arg: "-c"',' arg: "android.intent.category.LAUNCHER"',' arg: "1"',
             'data="com.ss.android.ugc.aweme"','data="android.intent.category.LAUNCHER"']:[]),
             'NATIVE_INNER_EXECUTION_TERMINATION_UNKNOWN','lock=preserved owner='+f.job.run_id,
             'guarded command timeout: whole command and children terminated; owner lock retained','',
           ].join('\n')}},
-        {operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at:review.observed_at},
+        ...(!accountNavigation?[{operation:'inspect',code:'STANDALONE_NATIVE_HOST_REVOKED',at:review.observed_at}]:[]),
       ])),
       leaf_ledger:f.seal(rawLines(ledger)),
       ...(uiProfile ? { ui_profile: uiProfile } : {}),
+      ...(accountNavigation ? { account_navigation: { evidence_id:evidenceId, hierarchy:f.seal(hierarchy) } } : {}),
     },
   });
   return f;
