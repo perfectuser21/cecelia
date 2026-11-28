@@ -414,7 +414,7 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
 });
 
 
-it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
+it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml', 'account-snapshot'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
   const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
   const next = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -431,7 +431,8 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml'])('102 已回�
   const telephony=[...target,'shell','dumpsys','telephony.registry'];
   const probe=[version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
     telephony,version,[...target,'shell','dumpsys','window','displays'],version,telephony];
-  const accountMode = mode === 'account-no-xml';
+  const snapshotMode = mode === 'account-snapshot';
+  const accountMode = mode === 'account-no-xml' || snapshotMode;
   const profile = (await f.state()).payload.scope.profile;
   const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
   const uiStat = [...target,'shell','stat','-c','%s',xml];
@@ -440,8 +441,14 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml'])('102 已回�
     foreground,version,foreground,version,[...target,'shell','rm','-f',xml],version,
     [...target,'shell','uiautomator','dump','--compressed',xml],version,uiStat,version,
     [...target,'shell',`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`]];
+  const snapshotId = f.job.run_id+'-acct-shot';
+  const remoteShot = '/sdcard/douyin-leadgen-shot-'+profile+'.png';
+  const localShot = '/private/tmp/openclaw-phone/evidence/'+profile+'/'+snapshotId+'.png';
+  const snapshot = [version,version,[...target,'get-state'],version,
+    [...target,'shell','screencap','-p',remoteShot],version,[...target,'pull',remoteShot,localShot]];
   const prelude={cleanup:[],launch:open,probes:[...probe,...probe],mixed:[...probe,...open,version],
-    'account-no-xml':[...probe,...open,...account]}[mode];
+    'account-no-xml':[...probe,...open,...account],
+    'account-snapshot':[...probe,...open,...account,...snapshot]}[mode];
   const commands = [...prelude,...cleanup];
   const sha = value => createHash('sha256').update(value).digest('hex');
   const boundary = 'darwin-sandbox-deny-process-fork-v1';
@@ -460,7 +467,8 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml'])('102 已回�
       leaves:{complete:!accountMode,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
         ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
     return {raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
-      ...(accountMode?{account_profile:profile}:{}),terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}};
+      ...(accountMode?{account_profile:profile}:{}),
+      ...(snapshotMode?{account_snapshot_id:snapshotId}:{}),terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}};
   };
   const {revocation,...review}=f.body.review;
   const body={...f.body,review:{...review,protocol:'standalone-released-no-effect-review/v1',admission_code:'CLEANUP_VERIFIED_NO_BUSINESS',
@@ -487,6 +495,12 @@ it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml'])('102 已回�
         replaceCommand(probe.length+open.length+10,[...target,'shell','rm','-f','/sdcard/foreign.xml']),
         [...probe,...open,...account,...account,...cleanup],
         [...prelude.slice(0,-1),...cleanup],
+      ]:[]),
+      ...(snapshotMode?[
+        replaceCommand(prelude.length-1,[...target,'pull',remoteShot,localShot.replace(f.job.run_id,randomUUID())]),
+        replaceCommand(prelude.length-1,[...target,'pull',remoteShot,'/tmp/foreign.png']),
+        replaceCommand(prelude.length-3,[...target,'shell','input','tap','100','100']),
+        [...prelude,...snapshot,...cleanup],
       ]:[]),
     ]) {
       expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:proofFor(invalidCommands)}})).status).toBe(400);
