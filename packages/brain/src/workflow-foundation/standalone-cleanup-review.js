@@ -28,10 +28,10 @@ function readJsonl({raw,sha256}, maxBytes) {
   try { return raw.slice(0,-1).split('\n').map(line=>JSON.parse(line)); } catch { invalid(false); }
 }
 
-function verifyLeafLedger(ledger, leaves, commands, terminalAckMissing) {
+function verifyLeafLedger(ledger, leaves, commands, terminalAckMissing, maxBytes = terminalAckMissing && commands.length <= 12 ? 12288 : 24576) {
   onlyKeys(ledger,['raw','sha256']);
   invalid(leaves.length===commands.length && commands.every((argv,index)=>sha(JSON.stringify(argv))===leaves[index].argv_sha256));
-  const records=readJsonl(ledger,terminalAckMissing&&commands.length<=12?12288:24576);
+  const records=readJsonl(ledger,maxBytes);
   const expected=leaves.flatMap(leaf=>{
     const {sequence,argv_sha256,intent_at,boundary,pid,started_at}=leaf;
     const intent={sequence,argv_sha256,intent_at,boundary};
@@ -255,13 +255,15 @@ export function verifyDesktopCleanupProof(review, host) {
 
 export function verifyReleasedCleanupProof(review, host, blockedAt) {
   const artifact = review.cleanup_diagnostic;
-  onlyKeys(artifact, ['raw','sha256','adb_endpoint','adb_serial','central_lease_version','terminal_ack_ledger']);
+  onlyKeys(artifact, ['raw','sha256','adb_endpoint','adb_serial','central_lease_version','terminal_ack_ledger','account_profile']);
   const { raw, sha256, adb_endpoint: endpoint, adb_serial: serial, central_lease_version: leaseVersion,
-    terminal_ack_ledger: ledger } = artifact;
+    terminal_ack_ledger: ledger, account_profile: accountProfile } = artifact;
+  const accountFallback = accountProfile !== undefined;
+  invalid(!accountFallback || typeof accountProfile === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(accountProfile));
   const socket = typeof endpoint === 'string' && endpoint.startsWith('tcp:') && localhost.exec(endpoint.slice(4));
   const transport = typeof serial === 'string' && localhost.exec(serial);
   invalid(review.admission_code === 'CLEANUP_VERIFIED_NO_BUSINESS' && review.hardware_diagnostic === undefined
-    && typeof raw === 'string' && Buffer.byteLength(raw) <= 12288 && sha(raw) === sha256
+    && typeof raw === 'string' && Buffer.byteLength(raw) <= (accountFallback ? 24576 : 12288) && sha(raw) === sha256
     && socket && Number(socket[1]) <= 65535 && transport && Number(transport[1]) <= 65535
     && typeof leaseVersion === 'string' && /^[0-9]{1,12}$/.test(leaseVersion));
 
@@ -277,18 +279,17 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
     && original.execution_mode === 'codex-direct' && original.native_return_unknown === false
     && original.quarantine_verified === false && original.local_released === true && original.central_released === true
     && foreground && androidComponent(foreground[2]).package === foreground[1]
-    && seal.complete === true && seal.empty_complete === false && seal.requests_returned === true
+    && seal.complete === !accountFallback && seal.empty_complete === false && seal.requests_returned === true
     && seal.empty_requests_returned === false && seal.epoch_fence_lost === false
     && typeof seal.ledger === 'string' && seal.ledger.startsWith(ledgerDirectory)
     && /^collection-leaves-[a-f0-9]+\.jsonl$/.test(seal.ledger.slice(ledgerDirectory.length))
-    && Array.isArray(seal.leaves) && seal.leaves.length <= 32);
+    && Array.isArray(seal.leaves) && seal.leaves.length <= (accountFallback ? 64 : 32));
   const target = ['-H','127.0.0.1','-P',socket[1],'-s',serial], version = ['version'];
   const state = [...target,'get-state'], foregroundProbe = [...target,'shell','dumpsys','window','displays'];
   const cleanup = [version,version,state,version,
     [...target,'shell','cmd','package','resolve-activity','-a','android.intent.action.MAIN','-c','android.intent.category.HOME'],
     version,[...target,'shell','input','keyevent','3'],version,foregroundProbe];
   invalid(seal.leaves.length >= cleanup.length);
-  verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt));
 
   const model = [...target,'shell','getprop','ro.product.model'];
   const allowedReads = [version,state,model,foregroundProbe,[...target,'shell','dumpsys','telephony.registry']];
@@ -304,14 +305,31 @@ export function verifyReleasedCleanupProof(review, host, blockedAt) {
   const startupEnd = startupStart + startup.length;
   if(launchIndex !== -1) invalid(startupStart >= 0 && startupEnd <= prefix.length);
 
-  // 允许任意次已知只读检查；唯一可选的非只读前缀必须是完整原启动序列。
+  let accountStart = -1;
+  let accountCommands = [];
+  let missingUiStats = [];
+  if (accountFallback) {
+    const xml = '/sdcard/douyin-leadgen-ui-' + accountProfile + '.xml';
+    const clear = [...target,'shell','rm','-f',xml];
+    accountCommands = [version,version,state,version,model,version,foregroundProbe,version,foregroundProbe,version,
+      clear,version,[...target,'shell','uiautomator','dump','--compressed',xml],version,
+      [...target,'shell','stat','-c','%s',xml],version,
+      [...target,'shell',`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`]];
+    accountStart = prefix.findIndex(leaf => leaf.argv_sha256 === commandDigest(clear)) - 10;
+    invalid(launchIndex !== -1 && accountStart >= startupEnd && accountStart + accountCommands.length <= prefix.length);
+    missingUiStats = [accountStart + 14];
+  }
+  verifyReturnedLeaves(seal.leaves, Date.parse(blockedAt), null, missingUiStats);
+
+  // 非只读动作限于完整启动和同账号预检清除固定 XML，其余逐条只读核验。
   const commands = prefix.map((leaf,index) => {
     if(launchIndex !== -1 && index >= startupStart && index < startupEnd) return startup[index-startupStart];
+    if (accountFallback && index >= accountStart && index < accountStart + accountCommands.length) return accountCommands[index-accountStart];
     const read = readByDigest.get(leaf.argv_sha256);
     invalid(read);
     return read;
   });
   commands.push(...cleanup);
-  return { sha256, ledgerSha256:verifyLeafLedger(ledger,seal.leaves,commands,false),
-    firstIntentAt:seal.leaves[0].intent_at, leaseVersion };
+  return { sha256, ledgerSha256:verifyLeafLedger(ledger,seal.leaves,commands,false,accountFallback ? 65536 : 24576),
+    firstIntentAt:seal.leaves[0].intent_at, leaseVersion, accountProfile };
 }

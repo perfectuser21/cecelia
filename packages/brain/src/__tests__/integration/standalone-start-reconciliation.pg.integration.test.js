@@ -414,7 +414,7 @@ it('keeps the account foreground refusal quarantined without exact diagnostics, 
 });
 
 
-it.each(['cleanup', 'launch', 'probes', 'mixed'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
+it.each(['cleanup', 'launch', 'probes', 'mixed', 'account-no-xml'])('102 已回桌面且零业务写入时结算原运行（原生记录=%s）', async (mode) => {
   const f = await blockedPhone({stage:'102', reason:'standalone_business_unconfirmed'});
   const next = await f.submit();
   expect((await f.claim()).body).toEqual({job:null});
@@ -431,14 +431,24 @@ it.each(['cleanup', 'launch', 'probes', 'mixed'])('102 已回桌面且零业务�
   const telephony=[...target,'shell','dumpsys','telephony.registry'];
   const probe=[version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
     telephony,version,[...target,'shell','dumpsys','window','displays'],version,telephony];
-  const prelude={cleanup:[],launch:open,probes:[...probe,...probe],mixed:[...probe,...open,version]}[mode];
+  const accountMode = mode === 'account-no-xml';
+  const profile = (await f.state()).payload.scope.profile;
+  const xml = '/sdcard/douyin-leadgen-ui-'+profile+'.xml';
+  const uiStat = [...target,'shell','stat','-c','%s',xml];
+  const foreground = [...target,'shell','dumpsys','window','displays'];
+  const account = [version,version,[...target,'get-state'],version,[...target,'shell','getprop','ro.product.model'],version,
+    foreground,version,foreground,version,[...target,'shell','rm','-f',xml],version,
+    [...target,'shell','uiautomator','dump','--compressed',xml],version,uiStat,version,
+    [...target,'shell',`if [ ! -e '${xml}' ] && [ ! -L '${xml}' ]; then printf '%s' 'REMOTE_UI_ABSENT_V1'; else exit 1; fi`]];
+  const prelude={cleanup:[],launch:open,probes:[...probe,...probe],mixed:[...probe,...open,version],
+    'account-no-xml':[...probe,...open,...account]}[mode];
   const commands = [...prelude,...cleanup];
   const sha = value => createHash('sha256').update(value).digest('hex');
   const boundary = 'darwin-sandbox-deny-process-fork-v1';
   const [device] = (await fixture.pool.query('SELECT xmin::text AS version FROM device_locks WHERE device_name=$1',[serial])).rows;
   const proofFor = argv => {
     const leaves = argv.map((cmd,index)=>({sequence:index+1,argv_sha256:sha(JSON.stringify(cmd)),intent_at:began,boundary,
-      pid:index+10,started_at:began,ended_at:began,code:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
+      pid:index+10,started_at:began,ended_at:began,code:accountMode&&cmd===uiStat?1:0,signal:null,tainted:false,dump_crash_returned:false,request_returned:true}));
     const ledger = leaves.flatMap(leaf=>{
       const {sequence,argv_sha256,intent_at,pid,started_at}=leaf;
       const intent={sequence,argv_sha256,intent_at,boundary};
@@ -447,10 +457,10 @@ it.each(['cleanup', 'launch', 'probes', 'mixed'])('102 已回桌面且零业务�
     const raw = JSON.stringify({task_id:f.task.id,run_id:f.job.run_id,execution_mode:'codex-direct',
       native_return_unknown:false,quarantine_verified:false,local_released:true,central_released:true,
       desktop:'launcher=com.android.launcher3\nforeground_package=com.android.launcher3\nforeground=  mCurrentFocus=Window{aa u0 com.android.launcher3/.Launcher}\n',
-      leaves:{complete:true,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
+      leaves:{complete:!accountMode,empty_complete:false,requests_returned:true,empty_requests_returned:false,epoch_fence_lost:false,leaves,
         ledger:f.body.review.host_proof.run_directory+'/standalone-leaves/collection-leaves-a.jsonl'}});
     return {raw,sha256:sha(raw),adb_endpoint:endpoint,adb_serial:transport,central_lease_version:device.version,
-      terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}};
+      ...(accountMode?{account_profile:profile}:{}),terminal_ack_ledger:{raw:ledger,sha256:sha(ledger)}};
   };
   const {revocation,...review}=f.body.review;
   const body={...f.body,review:{...review,protocol:'standalone-released-no-effect-review/v1',admission_code:'CLEANUP_VERIFIED_NO_BUSINESS',
@@ -473,6 +483,11 @@ it.each(['cleanup', 'launch', 'probes', 'mixed'])('102 已回桌面且零业务�
       [open[6],...cleanup],
       [...open,...open,...cleanup],
       replaceCommand(2,['-H','127.0.0.1','-P','5044','-s',transport,'get-state']),
+      ...(accountMode?[
+        replaceCommand(probe.length+open.length+10,[...target,'shell','rm','-f','/sdcard/foreign.xml']),
+        [...probe,...open,...account,...account,...cleanup],
+        [...prelude.slice(0,-1),...cleanup],
+      ]:[]),
     ]) {
       expect((await f.reconcile({...body,review:{...body.review,cleanup_diagnostic:proofFor(invalidCommands)}})).status).toBe(400);
     }
