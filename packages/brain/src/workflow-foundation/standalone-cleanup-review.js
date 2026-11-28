@@ -136,7 +136,6 @@ function androidHierarchyNodes(xml) {
   for (const character of xml) invalid(validXmlCodePoint(character.codePointAt(0)));
   const content = document[4];
   const nodes = [];
-  const attributePattern = /([A-Za-z_][\w.-]*)="([^"<>]*)"/y;
   let depth = 0;
   let offset = 0;
   for (const tag of content.matchAll(/<node(\s[^<>]*?)(\/?)>|<\/node>/g)) {
@@ -149,16 +148,13 @@ function androidHierarchyNodes(xml) {
     }
     invalid(depth>0 || nodes.length===0);
     const attributes = new Map();
-    const body = tag[1].trimEnd();
-    let cursor = 0;
-    while (cursor < body.length) {
-      const separator = cursor;
-      while (cursor < body.length && /\s/.test(body[cursor])) cursor++;
-      invalid(cursor > separator);
-      attributePattern.lastIndex = cursor;
-      const attribute = attributePattern.exec(body);
-      invalid(attribute);
-      const [,name,value]=attribute;
+    const fields = tag[1].trimEnd().split('"', 36_000);
+    invalid(fields.length > 1 && fields.length % 2 === 1 && fields.pop() === '');
+    for (let index = 0; index < 36_000 && index < fields.length; index += 2) {
+      const declaration = fields[index];
+      const name = declaration.slice(0,-1).trimStart();
+      invalid(/\s/.test(declaration[0] ?? '') && declaration.endsWith('=') && /^[A-Za-z_][\w.-]*$/.test(name));
+      const value = fields[index+1];
       invalid(!attributes.has(name)
         && !/&(?!amp;|lt;|gt;|quot;|apos;|#[0-9]+;|#x[0-9a-fA-F]+;)/.test(value));
       for (const [,decimal,hex] of value.matchAll(/&#(?:([0-9]+)|x([0-9a-fA-F]+));/g)) {
@@ -166,7 +162,6 @@ function androidHierarchyNodes(xml) {
         invalid(validXmlCodePoint(unit));
       }
       attributes.set(name,value);
-      cursor = attributePattern.lastIndex;
     }
     invalid(attributes.size>0);
     nodes.push(attributes);
